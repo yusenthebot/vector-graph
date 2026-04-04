@@ -355,10 +355,10 @@ def test_tool_query_matches_field_is_list(server) -> None:
 
 
 @pytest.mark.level5
-def test_list_tools_count_is_four(server) -> None:
-    """Server registers exactly 4 tools."""
+def test_list_tools_count_is_eight(server) -> None:
+    """Server registers exactly 8 tools (4 original + 4 new)."""
     tools = server.list_tools()
-    assert len(tools) == 4
+    assert len(tools) == 8
 
 
 @pytest.mark.level5
@@ -446,3 +446,164 @@ def test_main_defaults_to_dot(monkeypatch) -> None:
         sys.argv = original_argv
 
     assert calls == ["."]
+
+
+# ---------------------------------------------------------------------------
+# New tools: graph_query, export, cycles, orphans
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def cyclic_project(tmp_path: Path) -> Path:
+    """Create a project with a cyclic import for cycle detection tests."""
+    pkg = tmp_path / "cycpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "a.py").write_text(
+        "from .b import bar\n\ndef foo():\n    bar()\n"
+    )
+    (pkg / "b.py").write_text(
+        "from .a import foo\n\ndef bar():\n    pass\n"
+    )
+    return tmp_path
+
+
+@pytest.fixture
+def server_cyclic(cyclic_project: Path):
+    """Return a VectorGraphMCPServer for the cyclic project."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    return VectorGraphMCPServer(cyclic_project)
+
+
+@pytest.mark.level5
+def test_mcp_list_tools_count(server) -> None:
+    """list_tools returns exactly 8 tools after adding 4 new ones."""
+    tools = server.list_tools()
+    assert len(tools) == 8
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_callers_of(server) -> None:
+    """graph_query with callers_of query_type returns a valid result dict."""
+    result = server.call_tool("graph_query", {"query_type": "callers_of", "name": "start"})
+    assert isinstance(result, dict)
+    assert "query_type" in result or "nodes" in result or "count" in result
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_by_pattern(server) -> None:
+    """graph_query with by_pattern finds nodes matching glob pattern."""
+    result = server.call_tool("graph_query", {"query_type": "by_pattern", "pattern": "*"})
+    assert isinstance(result, dict)
+    # Should return nodes (all nodes match '*')
+    assert "count" in result or "nodes" in result
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_unknown_type_returns_empty(server) -> None:
+    """graph_query with unknown query_type returns an empty or error result."""
+    result = server.call_tool("graph_query", {"query_type": "totally_unknown_xyz"})
+    assert isinstance(result, dict)
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_missing_query_type_returns_empty(server) -> None:
+    """graph_query without query_type returns empty result (empty string query_type)."""
+    result = server.call_tool("graph_query", {})
+    assert isinstance(result, dict)
+    # Empty query_type dispatches to unknown handler -> empty QueryResult, not an error
+    assert "count" in result or "error" in result
+
+
+@pytest.mark.level5
+def test_mcp_tool_export_json(server) -> None:
+    """export tool with format=json returns a JSON string in 'data' or parseable output."""
+    result = server.call_tool("export", {"format": "json"})
+    assert isinstance(result, dict)
+    # Result should contain a 'data' key with JSON content
+    assert "data" in result or "output" in result or "json" in str(result).lower()
+    # Verify the JSON is parseable
+    import json
+    data_str = result.get("data") or result.get("output", "{}")
+    parsed = json.loads(data_str)
+    assert isinstance(parsed, dict)
+
+
+@pytest.mark.level5
+def test_mcp_tool_export_dot(server) -> None:
+    """export tool with format=dot returns a DOT format string."""
+    result = server.call_tool("export", {"format": "dot"})
+    assert isinstance(result, dict)
+    data_str = result.get("data") or result.get("output", "")
+    assert "digraph" in data_str
+
+
+@pytest.mark.level5
+def test_mcp_tool_export_default_is_json(server) -> None:
+    """export tool with no format argument defaults to json."""
+    result = server.call_tool("export", {})
+    assert isinstance(result, dict)
+    import json
+    data_str = result.get("data") or result.get("output", "{}")
+    parsed = json.loads(data_str)
+    assert isinstance(parsed, dict)
+
+
+@pytest.mark.level5
+def test_mcp_tool_cycles_returns_list(server) -> None:
+    """cycles tool returns a dict with a 'cycles' list."""
+    result = server.call_tool("cycles", {})
+    assert isinstance(result, dict)
+    assert "cycles" in result
+    assert isinstance(result["cycles"], list)
+
+
+@pytest.mark.level5
+def test_mcp_tool_cycles_count_field(server) -> None:
+    """cycles tool result has a 'count' field."""
+    result = server.call_tool("cycles", {})
+    assert "count" in result
+    assert isinstance(result["count"], int)
+
+
+@pytest.mark.level5
+def test_mcp_tool_orphans_returns_list(server) -> None:
+    """orphans tool returns a dict with an 'orphans' list."""
+    result = server.call_tool("orphans", {})
+    assert isinstance(result, dict)
+    assert "orphans" in result
+    assert isinstance(result["orphans"], list)
+
+
+@pytest.mark.level5
+def test_mcp_tool_orphans_count_field(server) -> None:
+    """orphans tool result has a 'count' field."""
+    result = server.call_tool("orphans", {})
+    assert "count" in result
+    assert isinstance(result["count"], int)
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_callees_of(server) -> None:
+    """graph_query with callees_of returns valid result."""
+    result = server.call_tool("graph_query", {"query_type": "callees_of", "name": "run_engine"})
+    assert isinstance(result, dict)
+
+
+@pytest.mark.level5
+def test_mcp_tool_graph_query_by_file(server) -> None:
+    """graph_query with by_file returns a result dict."""
+    result = server.call_tool("graph_query", {"query_type": "by_file", "file_path": "nonexistent.py"})
+    assert isinstance(result, dict)
+
+
+@pytest.mark.level5
+def test_mcp_new_tools_have_inputschema(server) -> None:
+    """All 4 new tools have valid inputSchema in list_tools."""
+    tools = server.list_tools()
+    new_tool_names = {"graph_query", "export", "cycles", "orphans"}
+    found = {t["name"]: t for t in tools if t["name"] in new_tool_names}
+    assert len(found) == 4
+    for name, tool in found.items():
+        assert "inputSchema" in tool, f"tool '{name}' missing inputSchema"
+        schema = tool["inputSchema"]
+        assert "type" in schema or "properties" in schema, f"tool '{name}' has invalid schema"

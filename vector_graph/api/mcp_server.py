@@ -114,6 +114,92 @@ class VectorGraphMCPServer:
                     "required": [],
                 },
             },
+            {
+                "name": "graph_query",
+                "description": (
+                    "Structured graph query. "
+                    "Types: callers_of, callees_of, subclasses_of, implementations_of, "
+                    "path_between, by_file, by_pattern, by_decorator"
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query_type": {
+                            "type": "string",
+                            "enum": [
+                                "callers_of",
+                                "callees_of",
+                                "subclasses_of",
+                                "implementations_of",
+                                "path_between",
+                                "by_file",
+                                "by_pattern",
+                                "by_decorator",
+                            ],
+                            "description": "The type of structured query to run",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Symbol name (for callers_of, callees_of, subclasses_of, implementations_of)",
+                        },
+                        "source": {
+                            "type": "string",
+                            "description": "Source symbol name (for path_between)",
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Target symbol name (for path_between)",
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "File path to query (for by_file)",
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Glob pattern to match against node names (for by_pattern)",
+                        },
+                        "decorator": {
+                            "type": "string",
+                            "description": "Decorator name to filter by (for by_decorator)",
+                        },
+                    },
+                    "required": ["query_type"],
+                },
+            },
+            {
+                "name": "export",
+                "description": "Export graph to JSON or DOT format",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "format": {
+                            "type": "string",
+                            "enum": ["json", "dot"],
+                            "default": "json",
+                            "description": "Output format: 'json' (default) or 'dot' (Graphviz)",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "cycles",
+                "description": "Detect dependency cycles in the codebase",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+            {
+                "name": "orphans",
+                "description": "Find unreachable functions/classes with no incoming edges",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -151,6 +237,10 @@ class VectorGraphMCPServer:
             "context": self._tool_context,
             "impact": self._tool_impact,
             "detect_changes": self._tool_detect_changes,
+            "graph_query": self._tool_graph_query,
+            "export": self._tool_export,
+            "cycles": self._tool_cycles,
+            "orphans": self._tool_orphans,
         }
         if name not in _dispatch:
             return {"error": f"Unknown tool: '{name}'"}
@@ -272,6 +362,54 @@ class VectorGraphMCPServer:
             "changed_files": [],
             "affected_symbols": [],
             "note": "No file watcher active. Start vector-graph with --watch to enable.",
+        }
+
+    def _tool_graph_query(self, query_type: str = "", **kwargs: Any) -> dict[str, Any]:
+        """Execute a structured graph query via CodeGraph.query()."""
+        result = self._graph_api.query(query_type, **kwargs)
+        return {
+            "query_type": result.query_type,
+            "params": result.params,
+            "count": result.count,
+            "nodes": [n.to_dict() for n in result.nodes],
+            "edges": [e.to_dict() for e in result.edges],
+        }
+
+    def _tool_export(self, format: str = "json") -> dict[str, Any]:
+        """Export the graph to JSON or DOT format via CodeGraph.export()."""
+        data = self._graph_api.export(format=format)
+        return {"format": format, "data": data}
+
+    def _tool_cycles(self) -> dict[str, Any]:
+        """Detect dependency cycles in the codebase via CodeGraph.cycles()."""
+        cycles = self._graph_api.cycles()
+        return {
+            "count": len(cycles),
+            "cycles": [
+                {
+                    "length": c.length,
+                    "node_ids": list(c.node_ids),
+                    "node_names": list(c.node_names),
+                    "edge_types": list(c.edge_types),
+                }
+                for c in cycles
+            ],
+        }
+
+    def _tool_orphans(self) -> dict[str, Any]:
+        """Find unreachable functions/classes with no incoming edges."""
+        orphan_nodes = self._graph_api.orphans()
+        return {
+            "count": len(orphan_nodes),
+            "orphans": [
+                {
+                    "id": n.id,
+                    "name": n.properties.name,
+                    "label": n.label.value,
+                    "file": n.properties.file_path,
+                }
+                for n in orphan_nodes
+            ],
         }
 
     # ------------------------------------------------------------------

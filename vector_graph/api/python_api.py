@@ -106,6 +106,21 @@ class CodeGraph:
             return []
         return [t for t in all_traces if t.entry_point_id == entry_id]
 
+    def cycles(self) -> list:
+        """Detect dependency cycles in the codebase.
+
+        Returns
+        -------
+        list[CycleInfo]
+            Each entry describes one strongly-connected component that forms
+            a cycle (CALLS, IMPORTS, or EXTENDS edges only).
+        """
+        self._ensure_analyzed()
+        from vector_graph.analysis.cycles import detect_cycles
+
+        assert self._graph is not None
+        return detect_cycles(self._graph)
+
     def orphans(self) -> list[GraphNode]:
         """Find unreachable functions/classes."""
         self._ensure_analyzed()
