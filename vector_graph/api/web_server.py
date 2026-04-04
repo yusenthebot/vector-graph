@@ -407,6 +407,7 @@ let highlightNodes = new Set();
 let highlightLinks = new Set();
 let depthFilter = 0; // 0 = all
 let graph3d = null;
+let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
@@ -414,6 +415,14 @@ async function loadData() {
   const d = await r.json();
   allNodes = d.nodes;
   allLinks = d.links;
+  // Build link index for O(1) lookups (perf optimization)
+  linkIndex = {from: {}, to: {}};
+  allLinks.forEach(l => {
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    const tid = typeof l.target === 'object' ? l.target.id : l.target;
+    (linkIndex.from[sid] = linkIndex.from[sid] || []).push(l);
+    (linkIndex.to[tid] = linkIndex.to[tid] || []).push(l);
+  });
   initGraph();
   buildFilters();
   buildExplorer();
@@ -448,9 +457,9 @@ function initGraph() {
       if (n.returnType) t += '<br><span style="color:#94e2d5">&#8594; ' + n.returnType + '</span>';
       if (n.params && n.params.length) t += '<br><span style="color:#89dceb">(' + n.params.join(', ') + ')</span>';
       if (n.bases && n.bases.length) t += '<br><span style="color:#cba6f7">extends ' + n.bases.join(', ') + '</span>';
-      // Show connections summary
-      const inCount = allLinks.filter(l => (typeof l.target==='object'?l.target.id:l.target) === n.id).length;
-      const outCount = allLinks.filter(l => (typeof l.source==='object'?l.source.id:l.source) === n.id).length;
+      // Show connections summary (use pre-built index)
+      const inCount = linkIndex.to[n.id] ? linkIndex.to[n.id].length : 0;
+      const outCount = linkIndex.from[n.id] ? linkIndex.from[n.id].length : 0;
       if (inCount || outCount) t += '<br><span style="color:#585b70">&#8592;' + inCount + ' &#8594;' + outCount + '</span>';
       t += '</div>';
       return t;
@@ -487,7 +496,7 @@ function initGraph() {
     .linkDirectionalArrowLength(3)
     .linkDirectionalArrowRelPos(1)
     .linkDirectionalParticles(l => {
-      if (!selectedId) return l.type === 'CALLS' ? 1 : 0;
+      if (!selectedId) return 0; // no particles until selection — big perf win
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
       return (sid === selectedId || tid === selectedId) ? 2 : 0;
@@ -497,10 +506,13 @@ function initGraph() {
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    .warmupTicks(20)
-    .cooldownTicks(30)
-    .d3AlphaDecay(0.06)
-    .d3VelocityDecay(0.35);
+    .warmupTicks(30)
+    .cooldownTicks(0)
+    .d3AlphaDecay(0.08)
+    .d3VelocityDecay(0.4)
+    .d3AlphaMin(0.01)
+    .enableNodeDrag(true)
+    .enableNavigationControls(true);
 }
 
 function getFilteredData() {
@@ -528,12 +540,15 @@ function bfsFromNode(startId, maxDepth) {
   for (let d = 0; d < maxDepth; d++) {
     const next = [];
     for (const nid of frontier) {
-      for (const l of allLinks) {
-        const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      // Use index instead of scanning all links
+      (linkIndex.from[nid] || []).forEach(l => {
         const tid = typeof l.target === 'object' ? l.target.id : l.target;
-        if (sid === nid && !visited.has(tid)) { visited.add(tid); next.push(tid); }
-        if (tid === nid && !visited.has(sid)) { visited.add(sid); next.push(sid); }
-      }
+        if (!visited.has(tid)) { visited.add(tid); next.push(tid); }
+      });
+      (linkIndex.to[nid] || []).forEach(l => {
+        const sid = typeof l.source === 'object' ? l.source.id : l.source;
+        if (!visited.has(sid)) { visited.add(sid); next.push(sid); }
+      });
     }
     frontier = next;
   }
@@ -550,14 +565,16 @@ function refreshGraph() {
 // ── Selection ───────────────────────────────────────────────
 function selectNode(id) {
   selectedId = id;
-  // Build highlight sets: connected nodes + edges
+  // Build highlight sets using pre-built index (O(degree) not O(edges))
   highlightNodes.clear();
   highlightLinks.clear();
-  allLinks.forEach(l => {
-    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+  (linkIndex.from[id] || []).forEach(l => {
     const tid = typeof l.target === 'object' ? l.target.id : l.target;
-    if (sid === id) { highlightNodes.add(tid); highlightLinks.add(l); }
-    if (tid === id) { highlightNodes.add(sid); highlightLinks.add(l); }
+    highlightNodes.add(tid); highlightLinks.add(l);
+  });
+  (linkIndex.to[id] || []).forEach(l => {
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    highlightNodes.add(sid); highlightLinks.add(l);
   });
   // Force re-render
   graph3d.nodeColor(graph3d.nodeColor());
@@ -653,19 +670,25 @@ async function openInspector(nodeId) {
   }
 
   // Source code
-  if (nd.file && nd.line) {
-    const srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file) + '&start=' + nd.line + '&end=' + (nd.endLine||nd.line)).then(r=>r.json());
-    if (srcR.content) {
-      const highlighted = hljs.highlight(srcR.content, {language:'python'}).value;
-      html += `<div class="insp-section"><h4>Source (lines ${srcR.startLine}-${srcR.endLine})</h4><pre><code class="hljs">${highlighted}</code></pre></div>`;
+  try {
+    let srcR = null;
+    if (nd.file && nd.line && nd.line > 0) {
+      srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file) + '&start=' + nd.line + '&end=' + (nd.endLine||nd.line)).then(r=>r.json());
+    } else if (nd.file) {
+      srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file)).then(r=>r.json());
     }
-  } else if (nd.file && nd.label === 'File') {
-    const srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file)).then(r=>r.json());
-    if (srcR.content) {
-      const truncated = srcR.content.length > 3000 ? srcR.content.slice(0,3000) + '\n...' : srcR.content;
-      const highlighted = hljs.highlight(truncated, {language:'python'}).value;
-      html += `<div class="insp-section"><h4>Source (${srcR.total} lines)</h4><pre><code class="hljs">${highlighted}</code></pre></div>`;
+    if (srcR && srcR.content) {
+      const code = srcR.content.length > 5000 ? srcR.content.slice(0,5000) + '\n// ... truncated' : srcR.content;
+      let highlighted;
+      try { highlighted = hljs.highlight(code, {language:'python'}).value; }
+      catch(e) { highlighted = escHtml(code); }
+      html += '<div class="insp-section"><h4>Source (lines ' + srcR.startLine + '-' + srcR.endLine + ')</h4><pre><code class="hljs">' + highlighted + '</code></pre></div>';
+      console.log('[inspector] source loaded:', srcR.content.length, 'chars');
+    } else {
+      console.log('[inspector] no source content for', nd.file);
     }
+  } catch(srcErr) {
+    console.error('[inspector] source error:', srcErr);
   }
 
   // Inbound (called by)
