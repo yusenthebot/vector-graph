@@ -39,8 +39,8 @@ def _build_pyvis_html(graph: KnowledgeGraph, max_nodes: int = 400) -> str:
         bgcolor="#1e1e2e",
         font_color="#cdd6f4",
         directed=True,
-        select_menu=True,
-        filter_menu=True,
+        select_menu=False,
+        filter_menu=False,
     )
 
     net.set_options(json.dumps({
@@ -133,9 +133,30 @@ def _build_pyvis_html(graph: KnowledgeGraph, max_nodes: int = 400) -> str:
     html = Path(tmp.name).read_text()
     os.unlink(tmp.name)
 
+    # Inline the lib/bindings/utils.js that pyvis references locally
+    utils_js = _find_pyvis_utils_js()
+    if utils_js:
+        html = html.replace(
+            '<script src="lib/bindings/utils.js"></script>',
+            f"<script>{utils_js}</script>",
+        )
+
     # Inject title
     html = html.replace("<head>", "<head><title>vector-graph</title>")
     return html
+
+
+def _find_pyvis_utils_js() -> str | None:
+    """Find and read pyvis's lib/bindings/utils.js from the installed package."""
+    try:
+        import pyvis
+        pkg_dir = Path(pyvis.__file__).parent
+        utils_path = pkg_dir / "templates" / "lib" / "bindings" / "utils.js"
+        if utils_path.exists():
+            return utils_path.read_text()
+    except Exception:
+        pass
+    return None
 
 
 def serve(
