@@ -316,26 +316,6 @@ const GROUPS = {
   ROS2: ['ROS2Node','Topic','Service','Action','Parameter'],
 };
 
-// ── Text texture for node labels ────────────────────────────
-function makeTextTexture(text, color) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  const maxLen = 16;
-  const label = text.length > maxLen ? text.slice(0, maxLen-1) + '..' : text;
-  ctx.font = 'bold 28px monospace';
-  const w = ctx.measureText(label).width + 16;
-  canvas.width = Math.max(64, Math.min(512, Math.pow(2, Math.ceil(Math.log2(w)))));
-  canvas.height = 64;
-  ctx.font = 'bold 28px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = color || '#cdd6f4';
-  ctx.fillText(label, canvas.width/2, canvas.height/2);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
-}
-
 // ── State ───────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
 let enabledLabels = new Set(Object.keys(COLORS));
@@ -363,74 +343,31 @@ function initGraph() {
   graph3d = ForceGraph3D()(container)
     .graphData({nodes, links})
     .backgroundColor('#11111b')
-    .nodeThreeObject(n => {
-      const color = new THREE.Color(COLORS[n.label] || '#cdd6f4');
-      const size = (SIZES[n.label] || 2) * 1.2;
-      const isSelected = selectedId && n.id === selectedId;
-      let geometry;
-      switch(n.label) {
-        case 'Class':     geometry = new THREE.OctahedronGeometry(size); break;
-        case 'ROS2Node':  geometry = new THREE.IcosahedronGeometry(size, 0); break;
-        case 'Topic':     geometry = new THREE.ConeGeometry(size*0.7, size*1.5, 6); break;
-        case 'Service':   geometry = new THREE.BoxGeometry(size*1.2, size*1.2, size*1.2); break;
-        case 'File':      geometry = new THREE.TetrahedronGeometry(size*0.8); break;
-        case 'Module':    geometry = new THREE.DodecahedronGeometry(size); break;
-        default:          geometry = new THREE.SphereGeometry(size, 12, 8); break;
-      }
-      const material = new THREE.MeshStandardMaterial({
-        color: isSelected ? 0xf5e0dc : color,
-        emissive: color,
-        emissiveIntensity: isSelected ? 0.8 : 0.35,
-        roughness: 0.4,
-        metalness: 0.3,
-        transparent: true,
-        opacity: 0.9,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      // Add text sprite for labels
-      if (size >= 3) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-          map: makeTextTexture(n.name, COLORS[n.label] || '#cdd6f4'),
-          transparent: true, depthWrite: false,
-        }));
-        sprite.scale.set(size*4, size*1.5, 1);
-        sprite.position.set(0, size + 3, 0);
-        mesh.add(sprite);
-      }
-      return mesh;
+    .nodeColor(n => selectedId === n.id ? '#f5e0dc' : (COLORS[n.label] || '#cdd6f4'))
+    .nodeRelSize(4)
+    .nodeVal(n => (SIZES[n.label] || 2))
+    .nodeOpacity(0.85)
+    .nodeLabel(n => {
+      const c = COLORS[n.label] || '#cdd6f4';
+      let t = '<div style="background:#181825ee;padding:6px 10px;border-radius:4px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + '">';
+      t += '<b style="color:' + c + '">' + n.label + '</b> ' + n.name;
+      if (n.file) t += '<br><span style="color:#a6adc8;font-size:10px">' + n.file.split('/').pop() + (n.line ? ':' + n.line : '') + '</span>';
+      t += '</div>';
+      return t;
     })
-    .nodeLabel(n => `<div style="background:#181825ee;color:#cdd6f4;padding:6px 10px;border-radius:4px;font-size:11px;font-family:monospace;border:1px solid ${COLORS[n.label]||'#313244'}">
-      <span style="color:${COLORS[n.label]||'#cdd6f4'};font-weight:bold">${n.label}</span> ${n.name}
-      ${n.file ? '<br><span style="color:#a6adc8;font-size:10px">'+n.file.split('/').pop()+(n.line?':'+n.line:'')+'</span>' : ''}
-    </div>`)
     .linkColor(l => EDGE_COLORS[l.type] || '#45475a')
-    .linkOpacity(0.2)
-    .linkWidth(l => l.type === 'CALLS' ? 0.4 : 0.15)
-    .linkDirectionalArrowLength(3.5)
+    .linkOpacity(0.15)
+    .linkWidth(0.3)
+    .linkDirectionalArrowLength(3)
     .linkDirectionalArrowRelPos(1)
-    .linkDirectionalArrowColor(l => EDGE_COLORS[l.type] || '#45475a')
-    .linkDirectionalParticles(l => l.type === 'CALLS' ? 2 : (l.type === 'PUBLISHES_TO' || l.type === 'SUBSCRIBES_TO' ? 1 : 0))
-    .linkDirectionalParticleWidth(1.2)
-    .linkDirectionalParticleSpeed(0.004)
+    .linkDirectionalParticles(l => l.type === 'CALLS' ? 1 : 0)
+    .linkDirectionalParticleWidth(1)
+    .linkDirectionalParticleSpeed(0.005)
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
-    .onNodeClick(n => { if(n) selectNode(n.id); })
+    .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    .warmupTicks(50)
-    .cooldownTicks(80)
-    .d3AlphaDecay(0.04)
-    .d3VelocityDecay(0.25);
-
-  // Lighting
-  const scene = graph3d.scene();
-  scene.fog = new THREE.FogExp2(0x11111b, 0.0006);
-  const ambient = new THREE.AmbientLight(0x404060, 1.5);
-  scene.add(ambient);
-  const point = new THREE.PointLight(0x89b4fa, 2, 500);
-  point.position.set(0, 100, 100);
-  scene.add(point);
-  const point2 = new THREE.PointLight(0xf38ba8, 1, 400);
-  point2.position.set(-100, -50, -100);
-  scene.add(point2);
+    .warmupTicks(40)
+    .cooldownTicks(60);
 }
 
 function getFilteredData() {
@@ -474,14 +411,13 @@ function refreshGraph() {
   if (!graph3d) return;
   const {nodes, links} = getFilteredData();
   graph3d.graphData({nodes, links});
-  graph3d.nodeThreeObject(graph3d.nodeThreeObject()); // force rebuild custom objects
   updateStats();
 }
 
 // ── Selection ───────────────────────────────────────────────
 function selectNode(id) {
   selectedId = id;
-  graph3d.nodeThreeObject(graph3d.nodeThreeObject()); // rebuild with selection highlight
+  graph3d.nodeColor(graph3d.nodeColor()); // refresh colors for selection
   openInspector(id);
   // Camera fly-to
   const node = graph3d.graphData().nodes.find(n => n.id === id);
@@ -500,7 +436,7 @@ function deselectNode() {
   selectedId = null;
   depthFilter = 0;
   document.getElementById('inspector').classList.remove('open');
-  graph3d.nodeThreeObject(graph3d.nodeThreeObject());
+  graph3d.nodeColor(graph3d.nodeColor());
   refreshGraph();
   updateDepthButtons();
 }
