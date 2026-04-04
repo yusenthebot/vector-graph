@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vector-graph"
+version = "0.1.0"
+description = "Python code analysis and knowledge graph for ROS2 development"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Vector Robotics"}]
+dependencies = []
+
+[project.optional-dependencies]
+analysis = ["networkx>=3.0"]
+watch = ["watchdog>=3.0"]
+mcp = ["mcp>=1.0"]
+viz = ["pygraphviz>=1.7"]
+all = ["vector-graph[analysis,watch,mcp,viz]"]
+dev = [
+    "vector-graph[all]",
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+vector-graph = "vector_graph.api.python_api:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vector_graph"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "level0: L0 — data types and graph operations",
+    "level1: L1 — Python parsing and import resolution",
+    "level2: L2 — analysis algorithms",
+    "level3: L3 — ROS2 extraction",
+    "level4: L4 — file watcher",
+    "level5: L5 — MCP server",
+]
+
+[tool.coverage.run]
+source = ["vector_graph"]
+
+[tool.coverage.report]
+fail_under = 80
