@@ -156,6 +156,45 @@ def build_context_response(graph: KnowledgeGraph, node_id: str) -> dict[str, Any
     }
 
 
+def build_file_tree(graph: KnowledgeGraph, root_path: str) -> dict[str, Any]:
+    """Build VS Code-style file tree with symbols per file."""
+    import os
+    tree: dict[str, Any] = {"name": os.path.basename(root_path), "type": "dir", "children": {}}
+
+    # Collect files and their symbols
+    file_symbols: dict[str, list[dict[str, Any]]] = {}
+    for node in graph.iter_nodes():
+        if node.label.value == "File":
+            rel = os.path.relpath(node.properties.file_path, root_path)
+            file_symbols.setdefault(rel, [])
+        elif node.properties.file_path:
+            rel = os.path.relpath(node.properties.file_path, root_path)
+            file_symbols.setdefault(rel, []).append({
+                "id": node.id, "name": node.properties.name, "label": node.label.value,
+                "line": node.properties.start_line or 0,
+            })
+
+    # Sort symbols by line
+    for syms in file_symbols.values():
+        syms.sort(key=lambda s: s.get("line", 0))
+
+    # Build nested tree
+    for rel_path in sorted(file_symbols.keys()):
+        parts = rel_path.split("/")
+        current = tree["children"]
+        for i, part in enumerate(parts[:-1]):
+            if part not in current:
+                current[part] = {"name": part, "type": "dir", "children": {}}
+            current = current[part]["children"]
+        fname = parts[-1]
+        current[fname] = {
+            "name": fname, "type": "file", "path": rel_path,
+            "symbols": file_symbols[rel_path],
+        }
+
+    return tree
+
+
 def build_search_results(graph: KnowledgeGraph, query: str, limit: int = 20) -> list[dict[str, Any]]:
     """Search nodes by name substring."""
     if not query:
@@ -198,33 +237,54 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
 #app { display:flex; height:100vh; }
 
 /* Sidebar */
-#sidebar { width:250px; min-width:250px; background:var(--mantle); border-right:1px solid var(--surface0); display:flex; flex-direction:column; overflow:hidden; z-index:10; }
-#sidebar-header { padding:12px; border-bottom:1px solid var(--surface0); }
-#sidebar-header h1 { font-size:14px; color:var(--blue); margin-bottom:6px; }
-#search { width:100%; padding:6px 10px; background:var(--surface0); border:1px solid var(--surface1); border-radius:4px; color:var(--text); font-size:11px; font-family:inherit; outline:none; }
+#sidebar { width:280px; min-width:280px; background:var(--mantle); border-right:1px solid var(--surface0); display:flex; flex-direction:column; overflow:hidden; z-index:10; }
+#sidebar-header { padding:10px 12px; border-bottom:1px solid var(--surface0); }
+#sidebar-header h1 { font-size:13px; color:var(--blue); margin-bottom:6px; }
+#search { width:100%; padding:5px 8px; background:var(--surface0); border:1px solid var(--surface1); border-radius:4px; color:var(--text); font-size:11px; font-family:inherit; outline:none; }
 #search:focus { border-color:var(--blue); }
 #search-results { position:absolute; top:100%; left:0; right:0; background:var(--base); border:1px solid var(--surface1); border-radius:4px; max-height:200px; overflow-y:auto; z-index:50; display:none; }
-#search-results .sr { padding:5px 10px; cursor:pointer; display:flex; align-items:center; gap:6px; }
+#search-results .sr { padding:4px 8px; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:11px; }
 #search-results .sr:hover { background:var(--surface0); }
 .search-wrap { position:relative; }
 
-#filters { flex:1; overflow-y:auto; padding:8px 12px; }
-#filters::-webkit-scrollbar { width:3px; }
-#filters::-webkit-scrollbar-thumb { background:var(--surface1); border-radius:2px; }
-.filter-group { margin-bottom:10px; }
-.filter-group h3 { font-size:9px; color:var(--overlay0); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
-.ftoggle { display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer; user-select:none; }
+/* Tabs */
+.sidebar-tabs { display:flex; border-bottom:1px solid var(--surface0); }
+.sidebar-tab { flex:1; padding:6px 0; text-align:center; font-size:10px; color:var(--overlay0); cursor:pointer; border-bottom:2px solid transparent; text-transform:uppercase; letter-spacing:0.5px; }
+.sidebar-tab:hover { color:var(--text); }
+.sidebar-tab.active { color:var(--blue); border-bottom-color:var(--blue); }
+.sidebar-panel { flex:1; overflow-y:auto; display:none; }
+.sidebar-panel.active { display:block; }
+.sidebar-panel::-webkit-scrollbar { width:3px; }
+.sidebar-panel::-webkit-scrollbar-thumb { background:var(--surface1); border-radius:2px; }
+
+/* File tree */
+.tree-dir { cursor:pointer; user-select:none; }
+.tree-dir-label { display:flex; align-items:center; gap:4px; padding:1px 0 1px 0; color:var(--subtext); font-size:11px; }
+.tree-dir-label:hover { color:var(--text); }
+.tree-dir-label .arrow { color:var(--overlay0); font-size:8px; width:10px; display:inline-block; }
+.tree-dir.collapsed > .tree-children { display:none; }
+.tree-dir.collapsed > .tree-dir-label .arrow { transform:rotate(-90deg); }
+.tree-children { padding-left:12px; }
+.tree-file { display:flex; align-items:center; gap:4px; padding:1px 0; cursor:pointer; font-size:11px; color:var(--subtext); }
+.tree-file:hover { color:var(--blue); }
+.tree-file.active { color:var(--blue); background:var(--surface0); margin:0 -4px; padding:1px 4px; border-radius:2px; }
+.tree-symbol { display:flex; align-items:center; gap:4px; padding:0 0 0 8px; cursor:pointer; font-size:10px; color:var(--overlay0); }
+.tree-symbol:hover { color:var(--text); }
+
+/* Filters */
+.filter-group { margin-bottom:8px; }
+.filter-group h3 { font-size:9px; color:var(--overlay0); text-transform:uppercase; letter-spacing:1px; margin-bottom:3px; }
+.ftoggle { display:flex; align-items:center; gap:5px; padding:1px 0; cursor:pointer; user-select:none; font-size:11px; }
 .ftoggle:hover { color:var(--text); }
 .ftoggle.off { color:var(--surface2); text-decoration:line-through; }
-.fdot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-.ftoggle.off .fdot { opacity:0.25; }
+.fdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ftoggle.off .fdot { opacity:0.2; }
 .fcount { margin-left:auto; color:var(--overlay0); font-size:10px; }
-
-.depth-bar { display:flex; gap:4px; margin-top:6px; }
-.depth-btn { padding:2px 8px; border-radius:3px; border:1px solid var(--surface1); background:transparent; color:var(--subtext); cursor:pointer; font-family:inherit; font-size:10px; }
+.depth-bar { display:flex; gap:3px; margin-top:4px; }
+.depth-btn { padding:2px 7px; border-radius:3px; border:1px solid var(--surface1); background:transparent; color:var(--subtext); cursor:pointer; font-family:inherit; font-size:10px; }
 .depth-btn.active { background:var(--blue); color:var(--bg); border-color:var(--blue); }
 
-#sidebar-stats { padding:8px 12px; border-top:1px solid var(--surface0); font-size:10px; color:var(--overlay0); }
+#sidebar-stats { padding:6px 12px; border-top:1px solid var(--surface0); font-size:10px; color:var(--overlay0); }
 
 /* Graph */
 #graph-container { flex:1; position:relative; background:var(--bg); }
@@ -269,11 +329,16 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
     <div id="sidebar-header">
       <h1>vector-graph</h1>
       <div class="search-wrap">
-        <input id="search" placeholder="Search nodes... (Ctrl+K)" autocomplete="off">
+        <input id="search" placeholder="Search... (Ctrl+K)" autocomplete="off">
         <div id="search-results"></div>
       </div>
     </div>
-    <div id="filters"></div>
+    <div class="sidebar-tabs">
+      <div class="sidebar-tab active" onclick="switchTab('explorer')">Explorer</div>
+      <div class="sidebar-tab" onclick="switchTab('filters')">Filters</div>
+    </div>
+    <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
+    <div id="panel-filters" class="sidebar-panel" style="padding:6px 12px"></div>
     <div id="sidebar-stats"></div>
   </div>
   <div id="graph-container">
@@ -349,6 +414,7 @@ async function loadData() {
   allLinks = d.links;
   initGraph();
   buildFilters();
+  buildExplorer();
   updateStats();
 }
 
@@ -614,9 +680,69 @@ async function openInspector(nodeId) {
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// ── Sidebar filters ─────────────────────────────────────────
+// ── Sidebar tabs ────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase().includes(tab)));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + tab).classList.add('active');
+}
+
+// ── File tree (Explorer tab) ────────────────────────────────
+async function buildExplorer() {
+  try {
+    const tree = await fetch('/api/tree').then(r => r.json());
+    const el = document.getElementById('panel-explorer');
+    el.innerHTML = renderTreeNode(tree);
+  } catch(e) {
+    document.getElementById('panel-explorer').innerHTML = '<div style="padding:8px;color:var(--overlay0)">Failed to load tree</div>';
+  }
+}
+
+function renderTreeNode(node) {
+  if (node.type === 'file') {
+    let html = '<div class="tree-file" onclick="focusFile(\'' + escAttr(node.path) + '\')">';
+    html += '<span style="color:var(--blue)">&#128196;</span> ' + node.name + '</div>';
+    // Show symbols inside file
+    if (node.symbols && node.symbols.length) {
+      html += '<div class="tree-children">';
+      node.symbols.forEach(s => {
+        const c = COLORS[s.label] || '#a6adc8';
+        const icon = s.label === 'Class' ? '&#9670;' : s.label === 'Method' ? '&#9702;' : '&#402;';
+        html += '<div class="tree-symbol" onclick="selectNode(\'' + s.id + '\')">';
+        html += '<span style="color:' + c + '">' + icon + '</span> ' + s.name;
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    return html;
+  }
+  // Directory
+  let html = '<div class="tree-dir">';
+  html += '<div class="tree-dir-label" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
+  html += '<span class="arrow">&#9660;</span> &#128193; ' + node.name + '</div>';
+  html += '<div class="tree-children">';
+  if (node.children) {
+    const sorted = Object.values(node.children).sort((a,b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    sorted.forEach(child => { html += renderTreeNode(child); });
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function focusFile(relPath) {
+  // Find a node in this file and select it
+  const fileNode = allNodes.find(n => n.label === 'File' && n.file && n.file.endsWith('/' + relPath));
+  if (fileNode) selectNode(fileNode.id);
+}
+
+// ── Sidebar filters (Filters tab) ──────────────────────────
 function buildFilters() {
-  const el = document.getElementById('filters');
+  const el = document.getElementById('panel-filters');
   let html = '';
 
   // Count nodes per label
@@ -743,6 +869,7 @@ def serve(
     """Start local HTTP server with 3D graph visualization."""
     print("Preparing graph data...")
     data_json = json.dumps(build_graph_data(graph, max_nodes=max_nodes)).encode()
+    tree_data = build_file_tree(graph, root_path)
     html_bytes = _HTML.encode("utf-8")
     root_resolved = os.path.realpath(root_path)
 
@@ -776,6 +903,8 @@ def serve(
             elif path == "/api/search":
                 results = build_search_results(graph, params.get("q", ""))
                 self._json({"results": results})
+            elif path == "/api/tree":
+                self._json(tree_data)
             else:
                 self.send_error(404)
 
