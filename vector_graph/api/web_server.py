@@ -565,7 +565,7 @@ function refreshGraph() {
 // ── Selection ───────────────────────────────────────────────
 function selectNode(id) {
   selectedId = id;
-  // Build highlight sets using pre-built index (O(degree) not O(edges))
+  // Build highlight sets using pre-built index
   highlightNodes.clear();
   highlightLinks.clear();
   (linkIndex.from[id] || []).forEach(l => {
@@ -581,8 +581,9 @@ function selectNode(id) {
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
   graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
-  // Open inspector (with error catch so it doesn't silently fail)
-  openInspector(id).catch(err => console.error('Inspector error:', err));
+  // Show inspector immediately with local data, then fetch details async
+  showInspectorImmediate(id);
+  fetchInspectorDetails(id);
   // Camera fly-to
   const node = graph3d.graphData().nodes.find(n => n.id === id);
   if (node) {
@@ -610,120 +611,115 @@ function deselectNode() {
 }
 
 // ── Inspector ───────────────────────────────────────────────
-async function openInspector(nodeId) {
-  console.log('[inspector] opening for:', nodeId);
+
+function showInspectorImmediate(nodeId) {
+  // Show panel immediately with data we already have (from allNodes)
   const panel = document.getElementById('inspector');
+  const nd = allNodes.find(n => n.id === nodeId);
+  if (!nd) return;
+
   panel.classList.add('open');
-  document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--overlay0)">Loading...</div>';
-
-  let ctxR = null, impR = null;
-  try {
-    const [ctxResp, impResp] = await Promise.all([
-      fetch('/api/context?node=' + encodeURIComponent(nodeId)),
-      fetch('/api/impact?node=' + encodeURIComponent(nodeId)),
-    ]);
-    ctxR = await ctxResp.json();
-    impR = await impResp.json().catch(() => null);
-    console.log('[inspector] context:', ctxR ? 'ok' : 'null', 'impact:', impR ? 'ok' : 'null');
-  } catch(err) {
-    console.error('[inspector] fetch error:', err);
-    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Error loading: '+err.message+'</div>';
-    return;
-  }
-
-  if (!ctxR || ctxR.error) {
-    console.warn('[inspector] node not found:', ctxR);
-    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--yellow)">Node not in analysis graph. Try another node.</div>';
-    return;
-  }
-  const nd = ctxR.node;
   const color = COLORS[nd.label] || '#cdd6f4';
 
   // Header
   document.getElementById('insp-badge').textContent = nd.label;
-  document.getElementById('insp-badge').style.cssText = `background:${color}22;color:${color}`;
+  document.getElementById('insp-badge').style.cssText = 'background:' + color + '22;color:' + color;
   document.getElementById('insp-name').textContent = nd.name;
 
   // Meta
-  let meta = '';
+  var meta = '';
   if (nd.file) meta += nd.file.split('/').pop();
   if (nd.line) meta += ':' + nd.line;
-  if (nd.endLine) meta += '-' + nd.endLine;
-  if (nd.params && nd.params.length) meta += ' | params: (' + nd.params.join(', ') + ')';
-  if (nd.returnType) meta += ' → ' + nd.returnType;
-  if (nd.bases && nd.bases.length) meta += ' | extends: ' + nd.bases.join(', ');
+  if (nd.params && nd.params.length) meta += ' | (' + nd.params.join(', ') + ')';
+  if (nd.returnType) meta += ' -> ' + nd.returnType;
+  if (nd.bases && nd.bases.length) meta += ' | extends ' + nd.bases.join(', ');
   document.getElementById('insp-meta').textContent = meta;
 
-  // Body
-  let html = '';
+  // Build connections from local data immediately
+  var html = '';
+  var inLinks = linkIndex.to[nodeId] || [];
+  var outLinks = linkIndex.from[nodeId] || [];
 
-  // Docstring
-  if (nd.doc) {
-    html += `<div class="insp-section"><h4>Documentation</h4><pre><code>${escHtml(nd.doc)}</code></pre></div>`;
-  }
-
-  // Decorators
-  if (nd.decorators && nd.decorators.length) {
-    html += `<div class="insp-section"><h4>Decorators</h4>`;
-    nd.decorators.forEach(d => { html += `<div style="color:var(--pink)">@${d}</div>`; });
-    html += '</div>';
-  }
-
-  // Source code
-  try {
-    let srcR = null;
-    if (nd.file && nd.line && nd.line > 0) {
-      srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file) + '&start=' + nd.line + '&end=' + (nd.endLine||nd.line)).then(r=>r.json());
-    } else if (nd.file) {
-      srcR = await fetch('/api/source?file=' + encodeURIComponent(nd.file)).then(r=>r.json());
-    }
-    if (srcR && srcR.content) {
-      const code = srcR.content.length > 5000 ? srcR.content.slice(0,5000) + '\n// ... truncated' : srcR.content;
-      let highlighted;
-      try { highlighted = hljs.highlight(code, {language:'python'}).value; }
-      catch(e) { highlighted = escHtml(code); }
-      html += '<div class="insp-section"><h4>Source (lines ' + srcR.startLine + '-' + srcR.endLine + ')</h4><pre><code class="hljs">' + highlighted + '</code></pre></div>';
-      console.log('[inspector] source loaded:', srcR.content.length, 'chars');
-    } else {
-      console.log('[inspector] no source content for', nd.file);
-    }
-  } catch(srcErr) {
-    console.error('[inspector] source error:', srcErr);
-  }
-
-  // Inbound (called by)
-  if (ctxR.inbound.length) {
-    html += `<div class="insp-section"><h4>Called by (${ctxR.inbound.length})</h4>`;
-    ctxR.inbound.slice(0,20).forEach(r => {
-      html += `<div class="rel-item" onclick="selectNode('${r.id}')"><span class="fdot" style="background:${COLORS[r.label]||'#cdd6f4'}"></span>${r.name} <span class="rel-type">${r.edgeType} · ${r.file}</span></div>`;
+  if (inLinks.length) {
+    html += '<div class="insp-section"><h4>Called by (' + inLinks.length + ')</h4>';
+    inLinks.slice(0, 20).forEach(function(l) {
+      var sid = typeof l.source === 'object' ? l.source.id : l.source;
+      var src = allNodes.find(function(n) { return n.id === sid; });
+      if (src) {
+        var c = COLORS[src.label] || '#cdd6f4';
+        html += '<div class="rel-item" onclick="selectNode(\'' + sid + '\')"><span class="fdot" style="background:' + c + '"></span>' + src.name + ' <span class="rel-type">' + l.type + '</span></div>';
+      }
     });
-    if (ctxR.inbound.length > 20) html += `<div style="color:var(--overlay0)">+${ctxR.inbound.length-20} more</div>`;
     html += '</div>';
   }
 
-  // Outbound (calls)
-  if (ctxR.outbound.length) {
-    html += `<div class="insp-section"><h4>Calls (${ctxR.outbound.length})</h4>`;
-    ctxR.outbound.slice(0,20).forEach(r => {
-      html += `<div class="rel-item" onclick="selectNode('${r.id}')"><span class="fdot" style="background:${COLORS[r.label]||'#cdd6f4'}"></span>${r.name} <span class="rel-type">${r.edgeType} · ${r.file}</span></div>`;
+  if (outLinks.length) {
+    html += '<div class="insp-section"><h4>Calls (' + outLinks.length + ')</h4>';
+    outLinks.slice(0, 20).forEach(function(l) {
+      var tid = typeof l.target === 'object' ? l.target.id : l.target;
+      var tgt = allNodes.find(function(n) { return n.id === tid; });
+      if (tgt) {
+        var c = COLORS[tgt.label] || '#cdd6f4';
+        html += '<div class="rel-item" onclick="selectNode(\'' + tid + '\')"><span class="fdot" style="background:' + c + '"></span>' + tgt.name + ' <span class="rel-type">' + l.type + '</span></div>';
+      }
     });
-    if (ctxR.outbound.length > 20) html += `<div style="color:var(--overlay0)">+${ctxR.outbound.length-20} more</div>`;
     html += '</div>';
   }
 
-  // Impact
-  if (impR && impR.risk) {
-    html += `<div class="insp-section"><h4>Impact Analysis</h4>`;
-    html += `<span class="risk-badge risk-${impR.risk}">${impR.risk}</span> ${impR.impacted_count||0} affected symbols`;
-    if (impR.entries) {
-      impR.entries.slice(0,8).forEach(e => {
-        html += `<div class="rel-item" style="font-size:10px"><span style="color:${e.depth===1?'var(--red)':'var(--overlay0)'}">d=${e.depth}</span> ${e.name} <span class="rel-type">${e.edge_type}</span></div>`;
-      });
-    }
-    html += '</div>';
-  }
+  html += '<div id="insp-source" style="padding:8px 12px;color:var(--overlay0)">Loading source...</div>';
+  html += '<div id="insp-impact"></div>';
 
   document.getElementById('insp-body').innerHTML = html;
+}
+
+function fetchInspectorDetails(nodeId) {
+  // Fetch source code
+  var nd = allNodes.find(function(n) { return n.id === nodeId; });
+  if (!nd) return;
+
+  var srcUrl = nd.file ? ('/api/source?file=' + encodeURIComponent(nd.file) + (nd.line > 0 ? '&start=' + nd.line + '&end=' + (nd.endLine || nd.line) : '')) : null;
+
+  if (srcUrl) {
+    fetch(srcUrl)
+      .then(function(r) { return r.json(); })
+      .then(function(srcR) {
+        var el = document.getElementById('insp-source');
+        if (!el || selectedId !== nodeId) return;
+        if (srcR.content) {
+          var code = srcR.content.length > 5000 ? srcR.content.slice(0, 5000) + '\n// ...' : srcR.content;
+          var highlighted;
+          try { highlighted = hljs.highlight(code, {language: 'python'}).value; }
+          catch(e) { highlighted = escHtml(code); }
+          el.innerHTML = '<div class="insp-section"><h4>Source (lines ' + srcR.startLine + '-' + srcR.endLine + ')</h4><pre><code class="hljs">' + highlighted + '</code></pre></div>';
+        } else {
+          el.innerHTML = '';
+        }
+      })
+      .catch(function(err) { console.error('source fetch error:', err); });
+  } else {
+    var el = document.getElementById('insp-source');
+    if (el) el.innerHTML = '';
+  }
+
+  // Fetch impact
+  fetch('/api/impact?node=' + encodeURIComponent(nodeId))
+    .then(function(r) { return r.json(); })
+    .then(function(impR) {
+      var el = document.getElementById('insp-impact');
+      if (!el || selectedId !== nodeId) return;
+      if (impR && impR.risk) {
+        var h = '<div class="insp-section"><h4>Impact</h4>';
+        h += '<span class="risk-badge risk-' + impR.risk + '">' + impR.risk + '</span> ' + (impR.impacted_count || 0) + ' affected';
+        if (impR.entries) {
+          impR.entries.slice(0, 5).forEach(function(e) {
+            h += '<div style="font-size:10px;padding:2px 0;color:' + (e.depth===1 ? 'var(--red)' : 'var(--overlay0)') + '">d=' + e.depth + ' ' + e.name + '</div>';
+          });
+        }
+        h += '</div>';
+        el.innerHTML = h;
+      }
+    })
+    .catch(function(err) { console.error('impact fetch error:', err); });
 }
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
