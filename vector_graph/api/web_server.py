@@ -64,6 +64,23 @@ def build_graph_data(graph: KnowledgeGraph, max_nodes: int = 600) -> dict[str, A
             entry["decorators"] = list(node.properties.decorators)
         if node.properties.docstring:
             entry["doc"] = node.properties.docstring[:200]
+        # Inline source snippet for functions/methods (compact)
+        # Files and large classes use lazy /api/source fetch
+        if (node.properties.file_path and node.properties.start_line
+                and node.label in (NodeLabel.FUNCTION, NodeLabel.METHOD,
+                                   NodeLabel.CLASS)):
+            try:
+                all_lines = Path(node.properties.file_path).read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                s = max(0, (node.properties.start_line or 1) - 1)
+                e = min(len(all_lines), (node.properties.end_line or s + 30))
+                snippet = "\n".join(all_lines[s:e])
+                if len(snippet) > 2000:
+                    snippet = snippet[:2000] + "\n# ... truncated"
+                entry["source"] = snippet
+            except OSError:
+                pass
         nodes.append(entry)
         node_ids.add(node.id)
 
@@ -666,39 +683,44 @@ function showInspectorImmediate(nodeId) {
     html += '</div>';
   }
 
-  html += '<div id="insp-source" style="padding:8px 12px;color:var(--overlay0)">Loading source...</div>';
+  // Source code — inline for functions/methods, lazy fetch for files
+  if (nd.source) {
+    var highlighted;
+    try {
+      highlighted = (typeof hljs !== 'undefined') ? hljs.highlight(nd.source, {language: 'python'}).value : escHtml(nd.source);
+    } catch(e) {
+      highlighted = escHtml(nd.source);
+    }
+    html += '<div class="insp-section"><h4>Source</h4><pre style="max-height:350px;overflow:auto"><code class="hljs">' + highlighted + '</code></pre></div>';
+  } else if (nd.file) {
+    html += '<div id="insp-source-lazy" class="insp-section"><h4>Source</h4><div style="color:var(--overlay0)">Loading...</div></div>';
+  }
+
   html += '<div id="insp-impact"></div>';
 
   document.getElementById('insp-body').innerHTML = html;
 }
 
 function fetchInspectorDetails(nodeId) {
-  // Fetch source code
   var nd = allNodes.find(function(n) { return n.id === nodeId; });
-  if (!nd) return;
 
-  var srcUrl = nd.file ? ('/api/source?file=' + encodeURIComponent(nd.file) + (nd.line > 0 ? '&start=' + nd.line + '&end=' + (nd.endLine || nd.line) : '')) : null;
-
-  if (srcUrl) {
+  // Lazy-load source for File nodes (not inlined to keep payload small)
+  if (nd && nd.file && !nd.source) {
+    var srcUrl = '/api/source?file=' + encodeURIComponent(nd.file);
+    if (nd.line > 0) srcUrl += '&start=' + nd.line + '&end=' + (nd.endLine || nd.line);
     fetch(srcUrl)
       .then(function(r) { return r.json(); })
       .then(function(srcR) {
-        var el = document.getElementById('insp-source');
+        var el = document.getElementById('insp-source-lazy');
         if (!el || selectedId !== nodeId) return;
-        if (srcR.content) {
-          var code = srcR.content.length > 5000 ? srcR.content.slice(0, 5000) + '\n// ...' : srcR.content;
-          var highlighted;
-          try { highlighted = hljs.highlight(code, {language: 'python'}).value; }
-          catch(e) { highlighted = escHtml(code); }
-          el.innerHTML = '<div class="insp-section"><h4>Source (lines ' + srcR.startLine + '-' + srcR.endLine + ')</h4><pre><code class="hljs">' + highlighted + '</code></pre></div>';
-        } else {
-          el.innerHTML = '';
+        if (srcR && srcR.content) {
+          var code = srcR.content.length > 5000 ? srcR.content.slice(0, 5000) + '\n# ...' : srcR.content;
+          var hi;
+          try { hi = hljs.highlight(code, {language: 'python'}).value; } catch(e) { hi = escHtml(code); }
+          el.innerHTML = '<h4>Source</h4><pre style="max-height:350px;overflow:auto"><code class="hljs">' + hi + '</code></pre>';
         }
       })
-      .catch(function(err) { console.error('source fetch error:', err); });
-  } else {
-    var el = document.getElementById('insp-source');
-    if (el) el.innerHTML = '';
+      .catch(function(err) { console.error('lazy source:', err); });
   }
 
   // Fetch impact
