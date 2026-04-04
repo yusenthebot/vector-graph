@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 _LABEL_PRIORITY: dict[NodeLabel, int] = {
     NodeLabel.ROS2_NODE: 0, NodeLabel.TOPIC: 1, NodeLabel.SERVICE: 1,
     NodeLabel.ACTION: 1, NodeLabel.PARAMETER: 2,
-    NodeLabel.CLASS: 3, NodeLabel.FUNCTION: 4, NodeLabel.METHOD: 5,
-    NodeLabel.MODULE: 6, NodeLabel.FILE: 7,
+    NodeLabel.CLASS: 3, NodeLabel.FUNCTION: 4, NodeLabel.FILE: 5,
+    NodeLabel.MODULE: 6, NodeLabel.METHOD: 7,
     NodeLabel.VARIABLE: 8, NodeLabel.DECORATOR: 8, NodeLabel.PROPERTY: 8,
     NodeLabel.FOLDER: 99,
 }
@@ -336,6 +336,8 @@ let allNodes = [], allLinks = [];
 let enabledLabels = new Set(Object.keys(COLORS));
 let enabledEdges = new Set(Object.keys(EDGE_COLORS));
 let selectedId = null;
+let highlightNodes = new Set();
+let highlightLinks = new Set();
 let depthFilter = 0; // 0 = all
 let graph3d = null;
 
@@ -358,21 +360,54 @@ function initGraph() {
   graph3d = ForceGraph3D()(container)
     .graphData({nodes, links})
     .backgroundColor('#11111b')
-    .nodeColor(n => selectedId === n.id ? '#f5e0dc' : (COLORS[n.label] || '#cdd6f4'))
+    .showNavInfo(false)
+    // Node appearance — dim unconnected when something is selected
+    .nodeColor(n => {
+      if (!selectedId) return COLORS[n.label] || '#cdd6f4';
+      if (n.id === selectedId) return '#f5e0dc';
+      if (highlightNodes.has(n.id)) return COLORS[n.label] || '#cdd6f4';
+      return '#313244'; // dimmed
+    })
     .nodeRelSize(4)
     .nodeVal(n => (SIZES[n.label] || 2))
-    .nodeOpacity(0.85)
+    .nodeOpacity(n => {
+      if (!selectedId) return 0.85;
+      if (n.id === selectedId || highlightNodes.has(n.id)) return 1.0;
+      return 0.08; // nearly invisible
+    })
     .nodeLabel(n => {
       const c = COLORS[n.label] || '#cdd6f4';
-      let t = '<div style="background:#181825ee;padding:6px 10px;border-radius:4px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + '">';
+      let t = '<div style="background:#181825ee;padding:6px 10px;border-radius:4px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:320px">';
       t += '<b style="color:' + c + '">' + n.label + '</b> ' + n.name;
       if (n.file) t += '<br><span style="color:#a6adc8;font-size:10px">' + n.file.split('/').pop() + (n.line ? ':' + n.line : '') + '</span>';
+      if (n.returnType) t += '<br><span style="color:#94e2d5;font-size:10px">returns ' + n.returnType + '</span>';
+      if (n.params && n.params.length) t += '<br><span style="color:#a6adc8;font-size:10px">(' + n.params.join(', ') + ')</span>';
+      if (n.bases && n.bases.length) t += '<br><span style="color:#cba6f7;font-size:10px">extends ' + n.bases.join(', ') + '</span>';
       t += '</div>';
       return t;
     })
-    .linkColor(l => EDGE_COLORS[l.type] || '#45475a')
-    .linkOpacity(0.15)
-    .linkWidth(0.3)
+    // Edge appearance — highlight connected edges
+    .linkColor(l => {
+      if (!selectedId) return EDGE_COLORS[l.type] || '#45475a';
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
+      return '#1e1e2e08'; // nearly invisible
+    })
+    .linkOpacity(l => {
+      if (!selectedId) return 0.12;
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === selectedId || tid === selectedId) return 0.8;
+      return 0.02;
+    })
+    .linkWidth(l => {
+      if (!selectedId) return 0.2;
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === selectedId || tid === selectedId) return 1.5;
+      return 0.05;
+    })
     .linkDirectionalArrowLength(3)
     .linkDirectionalArrowRelPos(1)
     .linkDirectionalParticles(l => l.type === 'CALLS' ? 1 : 0)
@@ -381,8 +416,11 @@ function initGraph() {
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    .warmupTicks(40)
-    .cooldownTicks(60);
+    // Performance: fewer ticks for faster stabilization
+    .warmupTicks(20)
+    .cooldownTicks(30)
+    .d3AlphaDecay(0.06)
+    .d3VelocityDecay(0.35);
 }
 
 function getFilteredData() {
@@ -432,7 +470,20 @@ function refreshGraph() {
 // ── Selection ───────────────────────────────────────────────
 function selectNode(id) {
   selectedId = id;
-  graph3d.nodeColor(graph3d.nodeColor()); // refresh colors for selection
+  // Build highlight sets: connected nodes + edges
+  highlightNodes.clear();
+  highlightLinks.clear();
+  allLinks.forEach(l => {
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    const tid = typeof l.target === 'object' ? l.target.id : l.target;
+    if (sid === id) { highlightNodes.add(tid); highlightLinks.add(l); }
+    if (tid === id) { highlightNodes.add(sid); highlightLinks.add(l); }
+  });
+  // Force re-render of colors/opacity
+  graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.linkColor(graph3d.linkColor());
+  graph3d.linkWidth(graph3d.linkWidth());
+  // Open inspector
   openInspector(id);
   // Camera fly-to
   const node = graph3d.graphData().nodes.find(n => n.id === id);
@@ -450,8 +501,12 @@ function selectNode(id) {
 function deselectNode() {
   selectedId = null;
   depthFilter = 0;
+  highlightNodes.clear();
+  highlightLinks.clear();
   document.getElementById('inspector').classList.remove('open');
   graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.linkColor(graph3d.linkColor());
+  graph3d.linkWidth(graph3d.linkWidth());
   refreshGraph();
   updateDepthButtons();
 }
@@ -460,14 +515,23 @@ function deselectNode() {
 async function openInspector(nodeId) {
   const panel = document.getElementById('inspector');
   panel.classList.add('open');
+  document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--overlay0)">Loading...</div>';
 
-  // Fetch context + impact in parallel
-  const [ctxR, impR] = await Promise.all([
-    fetch('/api/context?node=' + encodeURIComponent(nodeId)).then(r=>r.json()),
-    fetch('/api/impact?node=' + encodeURIComponent(nodeId)).then(r=>r.json()),
-  ]);
+  let ctxR, impR;
+  try {
+    [ctxR, impR] = await Promise.all([
+      fetch('/api/context?node=' + encodeURIComponent(nodeId)).then(r=>r.json()),
+      fetch('/api/impact?node=' + encodeURIComponent(nodeId)).then(r=>r.json()).catch(()=>({})),
+    ]);
+  } catch(err) {
+    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Error: '+err.message+'</div>';
+    return;
+  }
 
-  if (ctxR.error) { panel.classList.remove('open'); return; }
+  if (!ctxR || ctxR.error) {
+    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Node not found in graph</div>';
+    return;
+  }
   const nd = ctxR.node;
   const color = COLORS[nd.label] || '#cdd6f4';
 
