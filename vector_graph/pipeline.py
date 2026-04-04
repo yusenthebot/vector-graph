@@ -322,8 +322,54 @@ def run_pipeline(
     from vector_graph.analysis.execution_flow import detect_execution_flows
     flows = detect_execution_flows(graph)
 
-    # Phase 8: ROS2 extraction (future)
-    _progress("phase8: skipped (ROS2 extraction pending)")
+    # Phase 8: ROS2 extraction
+    _progress("phase8: extracting ROS2 nodes/topics/services")
+    try:
+        from vector_graph.ros2.node_extractor import extract_ros2_nodes
+        from vector_graph.ros2.ros2_graph import build_ros2_overlay
+        from vector_graph.ros2.launch_parser import parse_launch_file
+        from vector_graph.ros2.msg_parser import parse_msg_file, parse_srv_file
+
+        all_ros2_nodes = []
+        all_launch_info = []
+        all_msg_defs = []
+        for fp in file_paths:
+            try:
+                ros2_nodes = extract_ros2_nodes(fp)
+                if ros2_nodes:
+                    all_ros2_nodes.extend(ros2_nodes)
+            except Exception:
+                pass
+            # Parse launch files
+            if "launch" in os.path.basename(fp).lower():
+                try:
+                    li = parse_launch_file(fp)
+                    if li.nodes:
+                        all_launch_info.append(li)
+                except Exception:
+                    pass
+
+        # Parse .msg and .srv files
+        msg_dir = Path(root)
+        for msg_file in msg_dir.rglob("*.msg"):
+            try:
+                all_msg_defs.append(parse_msg_file(str(msg_file)))
+            except Exception:
+                pass
+        for srv_file in msg_dir.rglob("*.srv"):
+            try:
+                from vector_graph.ros2.msg_parser import parse_srv_file
+                all_msg_defs.append(parse_srv_file(str(srv_file)))
+            except Exception:
+                pass
+
+        if all_ros2_nodes:
+            build_ros2_overlay(graph, all_ros2_nodes, all_launch_info)
+            _progress(f"phase8: found {len(all_ros2_nodes)} ROS2 nodes")
+        else:
+            _progress("phase8: no ROS2 nodes found")
+    except ImportError:
+        _progress("phase8: ROS2 modules not available, skipping")
 
     # Tally counts
     file_count = sum(

@@ -20,15 +20,30 @@ logger = logging.getLogger(__name__)
 # Data preparation (testable, no HTTP dependency)
 # ---------------------------------------------------------------------------
 
+_LABEL_PRIORITY: dict[NodeLabel, int] = {
+    NodeLabel.ROS2_NODE: 0, NodeLabel.TOPIC: 1, NodeLabel.SERVICE: 1,
+    NodeLabel.ACTION: 1, NodeLabel.PARAMETER: 2,
+    NodeLabel.CLASS: 3, NodeLabel.FUNCTION: 4, NodeLabel.METHOD: 5,
+    NodeLabel.MODULE: 6, NodeLabel.FILE: 7,
+    NodeLabel.VARIABLE: 8, NodeLabel.DECORATOR: 8, NodeLabel.PROPERTY: 8,
+    NodeLabel.FOLDER: 99,
+}
+
+
 def build_graph_data(graph: KnowledgeGraph, max_nodes: int = 600) -> dict[str, Any]:
-    """Convert KnowledgeGraph to JSON for 3d-force-graph."""
+    """Convert KnowledgeGraph to JSON for 3d-force-graph.
+
+    Prioritizes ROS2 > Class > Function > Method > File to ensure
+    important nodes are included before the limit is hit.
+    """
     skip_labels = {NodeLabel.FOLDER}
+    all_nodes = [n for n in graph.iter_nodes() if n.label not in skip_labels]
+    all_nodes.sort(key=lambda n: _LABEL_PRIORITY.get(n.label, 50))
+
     nodes: list[dict[str, Any]] = []
     node_ids: set[str] = set()
 
-    for node in graph.iter_nodes():
-        if node.label in skip_labels:
-            continue
+    for node in all_nodes:
         if len(nodes) >= max_nodes:
             break
         entry: dict[str, Any] = {

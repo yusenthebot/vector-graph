@@ -156,7 +156,7 @@ def main() -> None:
     parser.add_argument("root", nargs="?", default=".", help="Project root directory (default: .)")
     parser.add_argument("--serve", action="store_true", help="Start web visualization at localhost")
     parser.add_argument("--port", type=int, default=5555, help="Web server port (default: 5555)")
-    parser.add_argument("--max-nodes", type=int, default=400, help="Max nodes in visualization (default: 400)")
+    parser.add_argument("--max-nodes", type=int, default=2000, help="Max nodes in visualization (default: 2000)")
     parser.add_argument("--impact", metavar="NAME", help="Run impact analysis on NAME")
     parser.add_argument(
         "--direction",
