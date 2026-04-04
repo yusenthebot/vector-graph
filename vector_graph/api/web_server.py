@@ -22,7 +22,8 @@ body { background: #1e1e2e; color: #cdd6f4; font-family: 'JetBrains Mono', 'Fira
 
 #app { display: flex; height: 100vh; }
 #sidebar { width: 320px; background: #181825; border-right: 1px solid #313244; display: flex; flex-direction: column; overflow: hidden; }
-#graph-container { flex: 1; position: relative; }
+#graph-container { flex: 1; position: relative; overflow: hidden; }
+#canvas { width: 100%; height: 100%; display: block; }
 
 /* Header */
 #header { padding: 16px; border-bottom: 1px solid #313244; }
@@ -411,22 +412,51 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// --- Loading screen ---
+function drawLoading() {
+  resize();
+  const w = canvas.width / devicePixelRatio, h = canvas.height / devicePixelRatio;
+  ctx.fillStyle = '#1e1e2e';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#89b4fa';
+  ctx.font = '16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Loading graph data...', w / 2, h / 2);
+}
+
 // --- Init ---
 window.addEventListener('resize', resize);
 resize();
+drawLoading();
 
-fetch('/api/data').then(r => r.json()).then(d => {
+fetch('/api/data').then(r => {
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}).then(d => {
   DATA = d;
   nodes = DATA.nodes;
   edges = DATA.edges;
+  console.log('Loaded', nodes.length, 'nodes', edges.length, 'edges');
   initPositions();
-  simulate(150);
+  simulate(200);
+  // Center camera on graph centroid
+  let cx = 0, cy = 0;
+  positions.forEach(p => { cx += p.x; cy += p.y; });
+  if (positions.size > 0) { camera.x = cx / positions.size; camera.y = cy / positions.size; }
+  camera.zoom = 0.5;
   renderStats();
   renderFilters();
   draw();
   document.getElementById('detail-empty').textContent = 'Click a node to inspect';
 }).catch(err => {
-  document.getElementById('detail-empty').textContent = 'Failed to load graph data: ' + err;
+  console.error('Failed to load:', err);
+  const w = canvas.width / devicePixelRatio, h = canvas.height / devicePixelRatio;
+  ctx.fillStyle = '#1e1e2e';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#f38ba8';
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Failed to load: ' + err.message, w / 2, h / 2);
 });
 </script>
 </body>
