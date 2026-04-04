@@ -304,12 +304,13 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
 #sidebar-stats { padding:6px 12px; border-top:1px solid var(--surface0); font-size:10px; color:var(--overlay0); }
 
 /* Graph */
-#graph-container { flex:1; position:relative; background:var(--bg); }
+#graph-container { flex:1; position:relative; background:var(--bg); overflow:hidden; min-width:0; }
+#graph-container > div { position:absolute !important; width:100% !important; height:100% !important; }
 #graph-container canvas { cursor:grab; }
 #graph-container canvas:active { cursor:grabbing; }
 
 /* Inspector */
-#inspector { width:380px; min-width:300px; max-width:500px; background:var(--mantle); border-left:1px solid var(--surface0); display:none; flex-direction:column; overflow:hidden; z-index:10; }
+#inspector { width:380px; min-width:300px; max-width:500px; background:var(--mantle); border-left:1px solid var(--surface0); display:none; flex-direction:column; overflow:hidden; z-index:20; position:relative; }
 #inspector.open { display:flex; }
 #insp-header { padding:10px 12px; border-bottom:1px solid var(--surface0); display:flex; align-items:center; gap:8px; }
 .type-badge { padding:1px 6px; border-radius:3px; font-size:9px; font-weight:bold; text-transform:uppercase; }
@@ -620,6 +621,7 @@ function deselectNode() {
   highlightNodes.clear();
   highlightLinks.clear();
   document.getElementById('inspector').classList.remove('open');
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
@@ -636,6 +638,8 @@ function showInspectorImmediate(nodeId) {
   if (!nd) return;
 
   panel.classList.add('open');
+  // Resize graph to fit new available space
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
   const color = COLORS[nd.label] || '#cdd6f4';
 
   // Header
@@ -929,6 +933,74 @@ loadData();
 # HTTP Server
 # ---------------------------------------------------------------------------
 
+_DEBUG_HTML = """<!DOCTYPE html>
+<html><head><title>vector-graph debug</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css">
+</head>
+<body style="background:#1e1e2e;color:#cdd6f4;font:13px monospace;padding:20px;max-width:800px">
+<h2 style="color:#89b4fa">Inspector Debug</h2>
+<pre id="log" style="white-space:pre-wrap"></pre>
+<div id="code-output" style="margin-top:20px"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script>
+function log(msg) { document.getElementById('log').textContent += msg + '\\n'; }
+
+async function run() {
+  log('Step 1: Loading /api/data...');
+  var data = await fetch('/api/data').then(r => r.json());
+  log('  Loaded ' + data.nodes.length + ' nodes');
+
+  var fn = data.nodes.find(n => n.source && n.label === 'Function');
+  if (!fn) { log('ERROR: No function with source found!'); return; }
+  log('Step 2: Found node: ' + fn.name + ' (' + fn.source.length + ' chars source)');
+  log('  First 100: ' + fn.source.substring(0, 100));
+
+  log('Step 3: Testing hljs.highlight...');
+  try {
+    var result = hljs.highlight(fn.source, {language: 'python'});
+    log('  hljs OK: ' + result.value.length + ' chars HTML');
+
+    log('Step 4: Rendering to DOM...');
+    document.getElementById('code-output').innerHTML =
+      '<h3 style="color:#89b4fa">' + fn.name + '</h3>' +
+      '<pre style="background:#11111b;padding:12px;border-radius:6px;border:1px solid #313244;max-height:400px;overflow:auto">' +
+      '<code class="hljs">' + result.value + '</code></pre>';
+    log('  DOM updated. You should see code below.');
+  } catch(e) {
+    log('ERROR in hljs: ' + e.message);
+    document.getElementById('code-output').innerHTML =
+      '<pre style="background:#11111b;padding:12px">' + fn.source.replace(/</g,'&lt;') + '</pre>';
+  }
+
+  log('\\nStep 5: Now testing showInspectorImmediate logic...');
+  var nd = fn;
+  var html = '';
+  if (nd.source) {
+    log('  nd.source exists: ' + nd.source.length + ' chars');
+    var highlighted;
+    try {
+      highlighted = hljs.highlight(nd.source, {language: 'python'}).value;
+      log('  highlight OK');
+    } catch(e) {
+      highlighted = nd.source.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      log('  highlight failed, using plain: ' + e.message);
+    }
+    html = '<div style="margin-top:20px"><h3 style="color:#a6e3a1">showInspectorImmediate output:</h3>' +
+      '<pre style="background:#11111b;padding:12px;border-radius:6px;border:1px solid #313244;max-height:300px;overflow:auto">' +
+      '<code class="hljs">' + highlighted + '</code></pre></div>';
+    log('  Built HTML: ' + html.length + ' chars');
+  } else {
+    log('  nd.source is falsy!');
+  }
+  document.getElementById('code-output').innerHTML += html;
+  log('\\nDone. If you see code above, the logic works.');
+}
+run();
+</script>
+</body></html>"""
+
+
 def serve(
     graph: KnowledgeGraph,
     root_path: str = ".",
@@ -975,6 +1047,8 @@ def serve(
                 self._json({"results": results})
             elif path == "/api/tree":
                 self._json(tree_data)
+            elif path == "/debug":
+                self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:
                 self.send_error(404)
 
