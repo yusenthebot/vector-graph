@@ -30,11 +30,30 @@ _LABEL_PRIORITY: dict[NodeLabel, int] = {
 }
 
 
-def build_graph_data(graph: KnowledgeGraph, max_nodes: int = 600) -> dict[str, Any]:
+def _node_group(file_path: str, root_path: str) -> str:
+    """Derive group name (relative directory) for nebula clustering."""
+    if not file_path or not root_path:
+        return "other"
+    try:
+        rel = os.path.relpath(file_path, root_path)
+        parts = rel.replace("\\", "/").split("/")
+        # Use up to 2 levels of directory: "vector_graph/analysis"
+        dir_parts = parts[:-1]  # drop filename
+        if not dir_parts:
+            return "root"
+        return "/".join(dir_parts[:2])
+    except ValueError:
+        return "other"
+
+
+def build_graph_data(
+    graph: KnowledgeGraph, max_nodes: int = 600, root_path: str = "",
+) -> dict[str, Any]:
     """Convert KnowledgeGraph to JSON for 3d-force-graph.
 
     Prioritizes ROS2 > Class > Function > Method > File to ensure
     important nodes are included before the limit is hit.
+    Each node includes a ``group`` field for nebula clustering.
     """
     skip_labels = {NodeLabel.FOLDER}
     all_nodes = [n for n in graph.iter_nodes() if n.label not in skip_labels]
@@ -46,10 +65,12 @@ def build_graph_data(graph: KnowledgeGraph, max_nodes: int = 600) -> dict[str, A
     for node in all_nodes:
         if len(nodes) >= max_nodes:
             break
+        group = _node_group(node.properties.file_path, root_path)
         entry: dict[str, Any] = {
             "id": node.id,
             "name": node.properties.name,
             "label": node.label.value,
+            "group": group,
             "file": node.properties.file_path or "",
             "line": node.properties.start_line or 0,
             "endLine": node.properties.end_line or 0,
@@ -355,9 +376,11 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
     </div>
     <div class="sidebar-tabs">
       <div class="sidebar-tab active" onclick="switchTab('explorer')">Explorer</div>
+      <div class="sidebar-tab" onclick="switchTab('groups')">Groups</div>
       <div class="sidebar-tab" onclick="switchTab('filters')">Filters</div>
     </div>
     <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
+    <div id="panel-groups" class="sidebar-panel" style="padding:6px 12px"></div>
     <div id="panel-filters" class="sidebar-panel" style="padding:6px 12px"></div>
     <div id="sidebar-stats"></div>
   </div>
@@ -369,6 +392,7 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
       <span><kbd>Drag</kbd> rotate</span>
       <span><kbd>Right-drag</kbd> pan</span>
       <span><kbd>Esc</kbd> deselect</span>
+      <span><kbd>Group</kbd> click sidebar to focus</span>
     </div>
   </div>
   <aside id="inspector">
@@ -382,6 +406,7 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   </aside>
 </div>
 
+<script src="https://unpkg.com/three@0.170.0/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1/dist/3d-force-graph.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
@@ -426,6 +451,9 @@ let highlightLinks = new Set();
 let depthFilter = 0; // 0 = all
 let graph3d = null;
 let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
+let GROUP_COLORS = {}; // populated in loadData after nodes arrive
+let nebulaGroup = null; // THREE.Group holding all nebula meshes
+let nebulaLabels = []; // sprite labels
 
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
@@ -441,9 +469,17 @@ async function loadData() {
     (linkIndex.from[sid] = linkIndex.from[sid] || []).push(l);
     (linkIndex.to[tid] = linkIndex.to[tid] || []).push(l);
   });
+  // Generate group colors using golden-ratio hue spacing
+  const groupNames = [...new Set(allNodes.map(n => n.group))].sort();
+  GROUP_COLORS = {};
+  groupNames.forEach((g, i) => {
+    const hue = (i * 137.508) % 360;
+    GROUP_COLORS[g] = `hsl(${hue}, 40%, 55%)`;
+  });
   initGraph();
   buildFilters();
   buildExplorer();
+  buildGroupsPanel();
   updateStats();
 }
 
@@ -530,7 +566,44 @@ function initGraph() {
     .d3VelocityDecay(0.4)
     .d3AlphaMin(0.01)
     .enableNodeDrag(true)
-    .enableNavigationControls(true);
+    .enableNavigationControls(true)
+    .onEngineStop(() => { updateNebulae(); });
+
+  // Inject clustering force to pull nodes toward group centroids
+  graph3d.d3Force('cluster', clusterForce(0.15));
+  graph3d.d3Force('charge').strength(-30);
+}
+
+function clusterForce(strength) {
+  let nodes;
+  function force(alpha) {
+    const centroids = {};
+    const counts = {};
+    nodes.forEach(n => {
+      const g = n.group || 'other';
+      if (!centroids[g]) { centroids[g] = {x:0,y:0,z:0}; counts[g] = 0; }
+      centroids[g].x += n.x || 0;
+      centroids[g].y += n.y || 0;
+      centroids[g].z += n.z || 0;
+      counts[g]++;
+    });
+    Object.keys(centroids).forEach(g => {
+      centroids[g].x /= counts[g];
+      centroids[g].y /= counts[g];
+      centroids[g].z /= counts[g];
+    });
+    const k = strength * alpha;
+    nodes.forEach(n => {
+      const c = centroids[n.group || 'other'];
+      if (c) {
+        n.vx += (c.x - n.x) * k;
+        n.vy += (c.y - n.y) * k;
+        n.vz += (c.z - n.z) * k;
+      }
+    });
+  }
+  force.initialize = (_nodes) => { nodes = _nodes; };
+  return force;
 }
 
 function getFilteredData() {
@@ -577,6 +650,7 @@ function refreshGraph() {
   if (!graph3d) return;
   const {nodes, links} = getFilteredData();
   graph3d.graphData({nodes, links});
+  setTimeout(updateNebulae, 500);
   updateStats();
 }
 
@@ -612,6 +686,15 @@ function selectNode(id) {
       1000
     );
   }
+  // Nebula highlighting for selected node's group
+  if (nebulaGroup) {
+    const selectedNode = allNodes.find(n => n.id === id);
+    nebulaGroup.children.forEach(child => {
+      if (child.userData.isNebula) {
+        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.12 : 0.03;
+      }
+    });
+  }
   updateDepthButtons();
 }
 
@@ -625,6 +708,12 @@ function deselectNode() {
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
+  // Reset nebula opacity
+  if (nebulaGroup) {
+    nebulaGroup.children.forEach(child => {
+      if (child.userData.isNebula) child.material.opacity = 0.04;
+    });
+  }
   refreshGraph();
   updateDepthButtons();
 }
@@ -749,6 +838,159 @@ function fetchInspectorDetails(nodeId) {
 }
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Nebula visualization ─────────────────────────────────────
+function updateNebulae() {
+  const scene = graph3d && graph3d.scene ? graph3d.scene() : null;
+  if (!scene) return;
+  if (typeof THREE === 'undefined') return;
+
+  // Remove old nebulae
+  if (nebulaGroup) { scene.remove(nebulaGroup); }
+  nebulaGroup = new THREE.Group();
+  nebulaLabels = [];
+
+  // Compute per-group bounds
+  const groups = {};
+  const gData = graph3d.graphData();
+  gData.nodes.forEach(n => {
+    const g = n.group || 'other';
+    if (!groups[g]) groups[g] = { nodes: [], x: 0, y: 0, z: 0 };
+    groups[g].nodes.push(n);
+    groups[g].x += n.x || 0;
+    groups[g].y += n.y || 0;
+    groups[g].z += n.z || 0;
+  });
+
+  Object.entries(groups).forEach(([name, grp]) => {
+    const count = grp.nodes.length;
+    if (count < 2) return; // skip singletons
+
+    const cx = grp.x / count;
+    const cy = grp.y / count;
+    const cz = grp.z / count;
+
+    // Compute radius (max distance from centroid * 1.3)
+    let maxDist = 0;
+    grp.nodes.forEach(n => {
+      const dx = (n.x||0) - cx, dy = (n.y||0) - cy, dz = (n.z||0) - cz;
+      const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (d > maxDist) maxDist = d;
+    });
+    const radius = Math.max(maxDist * 1.3, 15);
+
+    const colorStr = GROUP_COLORS[name] || '#888888';
+    const color = new THREE.Color(colorStr);
+
+    // Transparent sphere shell
+    const geo = new THREE.SphereGeometry(radius, 24, 16);
+    const mat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.04,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx, cy, cz);
+    mesh.userData = { groupName: name, isNebula: true };
+    nebulaGroup.add(mesh);
+
+    // Wireframe ring (subtle equatorial outline)
+    const ringGeo = new THREE.RingGeometry(radius * 0.98, radius, 48);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(cx, cy, cz);
+    nebulaGroup.add(ring);
+
+    // Sprite label above the shell
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 64;
+    ctx.font = 'bold 28px monospace';
+    ctx.fillStyle = colorStr;
+    ctx.globalAlpha = 0.7;
+    ctx.textAlign = 'center';
+    const shortName = name.split('/').pop() || name;
+    ctx.fillText(shortName, 256, 40);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.position.set(cx, cy + radius + 8, cz);
+    sprite.scale.set(radius * 0.8, radius * 0.1, 1);
+    sprite.userData = { groupName: name, isLabel: true };
+    nebulaGroup.add(sprite);
+    nebulaLabels.push({ sprite, name, cx, cy, cz, radius });
+  });
+
+  scene.add(nebulaGroup);
+}
+
+// ── Groups sidebar panel ─────────────────────────────────────
+function buildGroupsPanel() {
+  const el = document.getElementById('panel-groups');
+  const groupCounts = {};
+  allNodes.forEach(n => {
+    const g = n.group || 'other';
+    groupCounts[g] = (groupCounts[g] || 0) + 1;
+  });
+
+  const sorted = Object.entries(groupCounts).sort((a,b) => b[1] - a[1]);
+  let html = '<div class="filter-group"><h3>Packages</h3>';
+  sorted.forEach(([name, count]) => {
+    const color = GROUP_COLORS[name] || '#888';
+    const shortName = name.split('/').pop() || name;
+    html += `<div class="ftoggle" onclick="focusGroup('${name.replace(/'/g, "\\'")}')">
+      <span class="fdot" style="background:${color}"></span>
+      ${shortName}
+      <span class="fcount">${count}</span>
+    </div>`;
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function focusGroup(groupName) {
+  const groupNodes = graph3d.graphData().nodes.filter(n => n.group === groupName);
+  if (!groupNodes.length) return;
+
+  let cx = 0, cy = 0, cz = 0;
+  groupNodes.forEach(n => { cx += n.x||0; cy += n.y||0; cz += n.z||0; });
+  cx /= groupNodes.length; cy /= groupNodes.length; cz /= groupNodes.length;
+
+  let maxDist = 0;
+  groupNodes.forEach(n => {
+    const d = Math.sqrt(((n.x||0)-cx)**2 + ((n.y||0)-cy)**2 + ((n.z||0)-cz)**2);
+    if (d > maxDist) maxDist = d;
+  });
+  const dist = Math.max(maxDist * 2, 50);
+
+  graph3d.cameraPosition(
+    {x: cx + dist * 0.7, y: cy + dist * 0.4, z: cz + dist * 0.7},
+    {x: cx, y: cy, z: cz},
+    1500
+  );
+
+  // Highlight this nebula, dim others
+  if (nebulaGroup) {
+    nebulaGroup.children.forEach(child => {
+      if (child.userData.isNebula) {
+        child.material.opacity = (child.userData.groupName === groupName) ? 0.15 : 0.02;
+      }
+      if (child.userData.isLabel) {
+        child.material.opacity = (child.userData.groupName === groupName) ? 1.0 : 0.3;
+      }
+    });
+  }
+}
 
 // ── Sidebar tabs ────────────────────────────────────────────
 function switchTab(tab) {
@@ -1010,7 +1252,7 @@ def serve(
 ) -> None:
     """Start local HTTP server with 3D graph visualization."""
     print("Preparing graph data...")
-    data_json = json.dumps(build_graph_data(graph, max_nodes=max_nodes)).encode()
+    data_json = json.dumps(build_graph_data(graph, max_nodes=max_nodes, root_path=root_path)).encode()
     tree_data = build_file_tree(graph, root_path)
     html_bytes = _HTML.encode("utf-8")
     root_resolved = os.path.realpath(root_path)
