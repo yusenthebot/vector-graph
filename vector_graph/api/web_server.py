@@ -288,6 +288,8 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
 
 /* Graph */
 #graph-container { flex:1; position:relative; background:var(--bg); }
+#graph-container canvas { cursor:grab; }
+#graph-container canvas:active { cursor:grabbing; }
 
 /* Inspector */
 #inspector { width:380px; min-width:300px; max-width:500px; background:var(--mantle); border-left:1px solid var(--surface0); display:none; flex-direction:column; overflow:hidden; z-index:10; }
@@ -439,12 +441,17 @@ function initGraph() {
     .nodeOpacity(0.85)
     .nodeLabel(n => {
       const c = COLORS[n.label] || '#cdd6f4';
-      let t = '<div style="background:#181825ee;padding:6px 10px;border-radius:4px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:320px">';
-      t += '<b style="color:' + c + '">' + n.label + '</b> ' + n.name;
-      if (n.file) t += '<br><span style="color:#a6adc8;font-size:10px">' + n.file.split('/').pop() + (n.line ? ':' + n.line : '') + '</span>';
-      if (n.returnType) t += '<br><span style="color:#94e2d5;font-size:10px">returns ' + n.returnType + '</span>';
-      if (n.params && n.params.length) t += '<br><span style="color:#a6adc8;font-size:10px">(' + n.params.join(', ') + ')</span>';
-      if (n.bases && n.bases.length) t += '<br><span style="color:#cba6f7;font-size:10px">extends ' + n.bases.join(', ') + '</span>';
+      let t = '<div style="background:#181825f0;padding:8px 12px;border-radius:6px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:360px;line-height:1.5">';
+      t += '<b style="color:' + c + ';font-size:12px">' + n.name + '</b>';
+      t += ' <span style="background:' + c + '22;color:' + c + ';padding:1px 5px;border-radius:3px;font-size:9px">' + n.label + '</span>';
+      if (n.file) t += '<br><span style="color:#a6adc8">&#128196; ' + n.file.split('/').pop() + (n.line ? ':' + n.line : '') + '</span>';
+      if (n.returnType) t += '<br><span style="color:#94e2d5">&#8594; ' + n.returnType + '</span>';
+      if (n.params && n.params.length) t += '<br><span style="color:#89dceb">(' + n.params.join(', ') + ')</span>';
+      if (n.bases && n.bases.length) t += '<br><span style="color:#cba6f7">extends ' + n.bases.join(', ') + '</span>';
+      // Show connections summary
+      const inCount = allLinks.filter(l => (typeof l.target==='object'?l.target.id:l.target) === n.id).length;
+      const outCount = allLinks.filter(l => (typeof l.source==='object'?l.source.id:l.source) === n.id).length;
+      if (inCount || outCount) t += '<br><span style="color:#585b70">&#8592;' + inCount + ' &#8594;' + outCount + '</span>';
       t += '</div>';
       return t;
     })
@@ -470,15 +477,26 @@ function initGraph() {
       if (sid === selectedId || tid === selectedId) return 1.5;
       return 0.05;
     })
+    .linkCurvature(l => {
+      if (l.type === 'CALLS') return 0.15;
+      if (l.type === 'IMPORTS') return 0.2;
+      if (l.type === 'EXTENDS') return 0.25;
+      return 0.1;
+    })
+    .linkCurveRotation(l => l.type === 'IMPORTS' ? Math.PI * 0.5 : 0)
     .linkDirectionalArrowLength(3)
     .linkDirectionalArrowRelPos(1)
-    .linkDirectionalParticles(l => l.type === 'CALLS' ? 1 : 0)
-    .linkDirectionalParticleWidth(1)
-    .linkDirectionalParticleSpeed(0.005)
+    .linkDirectionalParticles(l => {
+      if (!selectedId) return l.type === 'CALLS' ? 1 : 0;
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      return (sid === selectedId || tid === selectedId) ? 2 : 0;
+    })
+    .linkDirectionalParticleWidth(1.2)
+    .linkDirectionalParticleSpeed(0.006)
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    // Performance: fewer ticks for faster stabilization
     .warmupTicks(20)
     .cooldownTicks(30)
     .d3AlphaDecay(0.06)
@@ -541,12 +559,13 @@ function selectNode(id) {
     if (sid === id) { highlightNodes.add(tid); highlightLinks.add(l); }
     if (tid === id) { highlightNodes.add(sid); highlightLinks.add(l); }
   });
-  // Force re-render of colors/opacity
+  // Force re-render
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
-  // Open inspector
-  openInspector(id);
+  graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
+  // Open inspector (with error catch so it doesn't silently fail)
+  openInspector(id).catch(err => console.error('Inspector error:', err));
   // Camera fly-to
   const node = graph3d.graphData().nodes.find(n => n.id === id);
   if (node) {
@@ -575,23 +594,29 @@ function deselectNode() {
 
 // ── Inspector ───────────────────────────────────────────────
 async function openInspector(nodeId) {
+  console.log('[inspector] opening for:', nodeId);
   const panel = document.getElementById('inspector');
   panel.classList.add('open');
   document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--overlay0)">Loading...</div>';
 
-  let ctxR, impR;
+  let ctxR = null, impR = null;
   try {
-    [ctxR, impR] = await Promise.all([
-      fetch('/api/context?node=' + encodeURIComponent(nodeId)).then(r=>r.json()),
-      fetch('/api/impact?node=' + encodeURIComponent(nodeId)).then(r=>r.json()).catch(()=>({})),
+    const [ctxResp, impResp] = await Promise.all([
+      fetch('/api/context?node=' + encodeURIComponent(nodeId)),
+      fetch('/api/impact?node=' + encodeURIComponent(nodeId)),
     ]);
+    ctxR = await ctxResp.json();
+    impR = await impResp.json().catch(() => null);
+    console.log('[inspector] context:', ctxR ? 'ok' : 'null', 'impact:', impR ? 'ok' : 'null');
   } catch(err) {
-    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Error: '+err.message+'</div>';
+    console.error('[inspector] fetch error:', err);
+    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Error loading: '+err.message+'</div>';
     return;
   }
 
   if (!ctxR || ctxR.error) {
-    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--red)">Node not found in graph</div>';
+    console.warn('[inspector] node not found:', ctxR);
+    document.getElementById('insp-body').innerHTML = '<div style="padding:12px;color:var(--yellow)">Node not in analysis graph. Try another node.</div>';
     return;
   }
   const nd = ctxR.node;
@@ -700,24 +725,28 @@ async function buildExplorer() {
 
 function renderTreeNode(node) {
   if (node.type === 'file') {
-    let html = '<div class="tree-file" onclick="focusFile(\'' + escAttr(node.path) + '\')">';
+    const hasSymbols = node.symbols && node.symbols.length > 0;
+    let html = '<div class="tree-dir' + (hasSymbols ? '' : '') + '">';
+    html += '<div class="tree-file" onclick="' + (hasSymbols ? "this.parentElement.classList.toggle('collapsed');" : '') + "focusFile('" + escAttr(node.path) + "')\">";
+    if (hasSymbols) html += '<span class="arrow" style="font-size:7px">&#9660;</span> ';
     html += '<span style="color:var(--blue)">&#128196;</span> ' + node.name + '</div>';
-    // Show symbols inside file
-    if (node.symbols && node.symbols.length) {
+    if (hasSymbols) {
       html += '<div class="tree-children">';
       node.symbols.forEach(s => {
         const c = COLORS[s.label] || '#a6adc8';
         const icon = s.label === 'Class' ? '&#9670;' : s.label === 'Method' ? '&#9702;' : '&#402;';
-        html += '<div class="tree-symbol" onclick="selectNode(\'' + s.id + '\')">';
+        html += '<div class="tree-symbol" onclick="event.stopPropagation();selectNode(\'' + s.id + '\')">';
         html += '<span style="color:' + c + '">' + icon + '</span> ' + s.name;
+        html += ' <span style="color:var(--surface2);font-size:9px">' + s.label + '</span>';
         html += '</div>';
       });
       html += '</div>';
     }
+    html += '</div>';
     return html;
   }
-  // Directory
-  let html = '<div class="tree-dir">';
+  // Directory — collapsed by default except top level
+  let html = '<div class="tree-dir collapsed">';
   html += '<div class="tree-dir-label" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
   html += '<span class="arrow">&#9660;</span> &#128193; ' + node.name + '</div>';
   html += '<div class="tree-children">';
