@@ -93,7 +93,7 @@ body { background: #1e1e2e; color: #cdd6f4; font-family: 'JetBrains Mono', 'Fira
   </div>
 </div>
 <script>
-const DATA = __GRAPH_DATA__;
+let DATA = {nodes: [], edges: []};
 
 const COLORS = {
   File: '#585b70', Function: '#89b4fa', Class: '#cba6f7', Method: '#94e2d5',
@@ -414,11 +414,20 @@ document.addEventListener('keydown', e => {
 // --- Init ---
 window.addEventListener('resize', resize);
 resize();
-initPositions();
-simulate(150);
-renderStats();
-renderFilters();
-draw();
+
+fetch('/api/data').then(r => r.json()).then(d => {
+  DATA = d;
+  nodes = DATA.nodes;
+  edges = DATA.edges;
+  initPositions();
+  simulate(150);
+  renderStats();
+  renderFilters();
+  draw();
+  document.getElementById('detail-empty').textContent = 'Click a node to inspect';
+}).catch(err => {
+  document.getElementById('detail-empty').textContent = 'Failed to load graph data: ' + err;
+});
 </script>
 </body>
 </html>"""
@@ -478,7 +487,8 @@ def serve(
     import threading
 
     data = _graph_to_json(graph, max_nodes=max_nodes)
-    html = _HTML_TEMPLATE.replace("__GRAPH_DATA__", json.dumps(data))
+    data_json = json.dumps(data)
+    html = _HTML_TEMPLATE
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -490,8 +500,9 @@ def serve(
             elif self.path == "/api/data":
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps(data).encode())
+                self.wfile.write(data_json.encode())
             else:
                 self.send_error(404)
 

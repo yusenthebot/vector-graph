@@ -148,12 +148,15 @@ def _empty_impact(target_name: str, direction: str) -> ImpactResult:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """CLI entry point: vector-graph <root> [--impact <name>] [--orphans]."""
+    """CLI entry point: vector-graph <root> [--serve] [--impact NAME] [--orphans]."""
     parser = argparse.ArgumentParser(
         prog="vector-graph",
         description="Python code knowledge graph analyser",
     )
-    parser.add_argument("root", help="Project root directory to analyse")
+    parser.add_argument("root", nargs="?", default=".", help="Project root directory (default: .)")
+    parser.add_argument("--serve", action="store_true", help="Start web visualization at localhost")
+    parser.add_argument("--port", type=int, default=5555, help="Web server port (default: 5555)")
+    parser.add_argument("--max-nodes", type=int, default=400, help="Max nodes in visualization (default: 400)")
     parser.add_argument("--impact", metavar="NAME", help="Run impact analysis on NAME")
     parser.add_argument(
         "--direction",
@@ -161,39 +164,23 @@ def main() -> None:
         default="upstream",
         help="Impact direction (default: upstream)",
     )
-    parser.add_argument(
-        "--orphans",
-        action="store_true",
-        help="List orphan functions/classes",
-    )
-    parser.add_argument(
-        "--depth",
-        type=int,
-        default=3,
-        metavar="N",
-        help="Max BFS depth for impact (default: 3)",
-    )
+    parser.add_argument("--orphans", action="store_true", help="List orphan functions/classes")
+    parser.add_argument("--depth", type=int, default=3, metavar="N", help="Max BFS depth (default: 3)")
     args = parser.parse_args()
+
+    from vector_graph.api.visualize import print_summary, print_impact
 
     cg = CodeGraph(args.root)
     result = cg.analyze()
-
-    print(f"root:       {result.root}")
-    print(f"nodes:      {result.node_count}")
-    print(f"edges:      {result.edge_count}")
-    print(f"files:      {result.file_count}")
-    print(f"functions:  {result.function_count}")
-    print(f"classes:    {result.class_count}")
-    print(f"imports:    {result.import_count}")
-    print(f"calls:      {result.call_count}")
-    print(f"communities:{result.community_count}")
-    print(f"flows:      {result.process_count}")
+    print_summary(result)
 
     if args.impact:
         impact = cg.impact(args.impact, direction=args.direction, max_depth=args.depth)
-        print(f"\nImpact of '{args.impact}' ({impact.direction}): {impact.risk}")
-        for entry in impact.entries:
-            print(f"  depth={entry.depth}  {entry.name}  ({entry.file_path})")
+        print_impact(impact)
+
+    if args.serve:
+        from vector_graph.api.web_server import serve
+        serve(cg._graph, port=args.port, max_nodes=args.max_nodes)
 
     if args.orphans:
         orphan_nodes = cg.orphans()

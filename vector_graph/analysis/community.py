@@ -129,13 +129,17 @@ def _community_label(members: list[str], graph: object) -> str:
     return "community"
 
 
-def _compute_cohesion(members: list[str], all_edges: list[tuple[str, str]]) -> float:
-    """Internal edge ratio: edges within community / max possible internal edges."""
+def _compute_cohesion(members: list[str], edge_index: dict[str, set[str]]) -> float:
+    """Internal edge ratio using pre-built adjacency index."""
     n = len(members)
     if n <= 1:
         return 1.0
     member_set = set(members)
-    internal = sum(1 for s, t in all_edges if s in member_set and t in member_set)
+    internal = 0
+    for m in members:
+        for neighbor in edge_index.get(m, set()):
+            if neighbor in member_set:
+                internal += 1
     max_possible = n * (n - 1)
     return internal / max_possible if max_possible > 0 else 0.0
 
@@ -179,20 +183,26 @@ def detect_communities(
         if edge.source_id in node_set and edge.target_id in node_set:
             edges.append((edge.source_id, edge.target_id))
 
-    # Detect raw community groups
-    if _HAS_NETWORKX:
-        raw_groups = _networkx_communities(node_ids, edges)
-    else:
+    # Use fast fallback for large graphs — networkx label_propagation is slow on 4000+ nodes
+    if len(node_ids) > 2000 or not _HAS_NETWORKX:
         raw_groups = _fallback_communities(node_ids, edges)
+    else:
+        raw_groups = _networkx_communities(node_ids, edges)
 
-    # Build CommunityInfo for each group with size > 0
+    # Build adjacency index for fast cohesion computation
+    edge_index: dict[str, set[str]] = defaultdict(set)
+    for src, tgt in edges:
+        edge_index[src].add(tgt)
+        edge_index[tgt].add(src)
+
+    # Build CommunityInfo for each group with size > 1 (skip singletons)
     communities: list[CommunityInfo] = []
     for idx, members in enumerate(raw_groups):
-        if not members:
+        if len(members) <= 1:
             continue
 
         label = _community_label(members, graph)
-        cohesion = _compute_cohesion(members, edges)
+        cohesion = _compute_cohesion(members, edge_index)
 
         comm = CommunityInfo(
             id=f"comm_{idx}",
