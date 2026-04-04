@@ -180,7 +180,7 @@ def main() -> None:
 
     if args.serve:
         from vector_graph.api.web_server import serve
-        serve(cg._graph, port=args.port, max_nodes=args.max_nodes)
+        serve(cg._graph, root_path=str(cg._root), port=args.port, max_nodes=args.max_nodes)
 
     if args.orphans:
         orphan_nodes = cg.orphans()
