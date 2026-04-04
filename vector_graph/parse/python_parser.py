@@ -46,7 +46,10 @@ def parse_file(file_path: str, source: str | None = None) -> FileParseResult:
         return FileParseResult(file_path=file_path)
 
     visitor = _Visitor(file_path)
-    visitor.visit(tree)
+    try:
+        visitor.visit(tree)
+    except RecursionError:
+        return FileParseResult(file_path=file_path)
 
     return FileParseResult(
         file_path=file_path,
@@ -257,7 +260,7 @@ class _Visitor(ast.NodeVisitor):
                     value_type=None,
                 )
             )
-        self.generic_visit(node)
+        # Do NOT generic_visit into annotation expressions — they can be deeply nested
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Handle `name = value` assignments (no annotation)."""
@@ -274,7 +277,7 @@ class _Visitor(ast.NodeVisitor):
                         value_type=value_type,
                     )
                 )
-        self.generic_visit(node)
+        # Do NOT generic_visit into value expressions — they can be deeply nested
 
 
 # ---------------------------------------------------------------------------

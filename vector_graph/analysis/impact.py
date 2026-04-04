@@ -85,14 +85,20 @@ def analyze_impact(
     # BFS queue: (node_id, depth, edge_type, confidence)
     queue: deque[tuple[str, int, str, float]] = deque()
 
-    # Seed from direct neighbors
-    if direction == "upstream":
-        seed_edges = graph.get_edges_to(target_id)  # type: ignore[attr-defined]
-        _enqueue_edges(queue, seed_edges, depth=1, direction=direction,
-                       min_confidence=min_confidence, relation_types=relation_types,
-                       visited=visited)
-    else:
-        seed_edges = graph.get_edges_from(target_id)  # type: ignore[attr-defined]
+    # For Class nodes: also seed from all methods (HAS_METHOD edges)
+    seed_ids = [target_id]
+    if target_node is not None and target_node.label.value == "Class":
+        for edge in graph.get_edges_from(target_id):  # type: ignore[attr-defined]
+            if edge.edge_type == EdgeType.HAS_METHOD:
+                seed_ids.append(edge.target_id)
+                visited.add(edge.target_id)
+
+    # Seed from direct neighbors of all seed IDs
+    for sid in seed_ids:
+        if direction == "upstream":
+            seed_edges = graph.get_edges_to(sid)  # type: ignore[attr-defined]
+        else:
+            seed_edges = graph.get_edges_from(sid)  # type: ignore[attr-defined]
         _enqueue_edges(queue, seed_edges, depth=1, direction=direction,
                        min_confidence=min_confidence, relation_types=relation_types,
                        visited=visited)

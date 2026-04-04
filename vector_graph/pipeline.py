@@ -70,9 +70,26 @@ def _is_test_file(file_path: str) -> bool:
     return basename.startswith("test_") or name_no_ext.endswith("_test")
 
 
+_SKIP_DIRS: frozenset[str] = frozenset({
+    ".venv", ".venv-nano", "venv", "env",
+    ".git", ".hg", ".svn",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "node_modules", ".tox", ".nox",
+    "build", "dist", ".eggs", "*.egg-info",
+    ".history", ".sisyphus",
+})
+
+
 def _walk_python_files(root: Path) -> list[str]:
-    """Return all .py file paths under root."""
-    return [str(p) for p in root.rglob("*.py")]
+    """Return all .py file paths under root, skipping non-source directories."""
+    results: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune skip dirs in-place
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.endswith(".egg-info")]
+        for fname in filenames:
+            if fname.endswith(".py"):
+                results.append(os.path.join(dirpath, fname))
+    return results
 
 
 def _phase1_create_file_nodes(
@@ -152,6 +169,24 @@ def _phase3_register_symbols(
                 label=NodeLabel.CLASS,
             )
             symbol_table.register(sym)
+
+        # Create HAS_METHOD edges: Class -> Method
+        for fn in result.functions:
+            if fn.is_method and fn.owner_class:
+                method_id = _fn_node_id(fn.name, file_path, fn.start_line)
+                # Find the owning class node
+                for cls in result.classes:
+                    if cls.name == fn.owner_class:
+                        class_id = _class_node_id(cls.name, file_path, cls.start_line)
+                        eid = _edge_id(class_id, method_id, EdgeType.HAS_METHOD)
+                        graph.add_edge(Edge(
+                            id=eid,
+                            source_id=class_id,
+                            target_id=method_id,
+                            edge_type=EdgeType.HAS_METHOD,
+                            confidence=0.95,
+                        ))
+                        break
 
 
 def _phase4_resolve_imports(
