@@ -55,6 +55,10 @@ def _class_node_id(name: str, file_path: str, start_line: int) -> str:
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
+def _node_id(raw: str) -> str:
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
+
+
 def _edge_id(source_id: str, target_id: str, edge_type: EdgeType) -> str:
     raw = f"{source_id}-{edge_type.value}->{target_id}"
     return hashlib.md5(raw.encode()).hexdigest()[:16]
@@ -170,23 +174,106 @@ def _phase3_register_symbols(
             )
             symbol_table.register(sym)
 
-        # Create HAS_METHOD edges: Class -> Method
+        # Register module-level variables/assignments as Variable nodes
+        for assign in result.assignments:
+            if assign.declared_type or assign.value_type:
+                var_id = _node_id(f"var:{assign.name}:{file_path}:{assign.line}")
+                props = NodeProperties(
+                    name=assign.name,
+                    file_path=file_path,
+                    start_line=assign.line,
+                    declared_type=assign.declared_type or assign.value_type,
+                )
+                graph.add_node(GraphNode(id=var_id, label=NodeLabel.VARIABLE, properties=props))
+
+        file_node_id = _file_node_id(file_path)
+
+        # CONTAINS edges: File -> Function/Class (top-level symbols)
         for fn in result.functions:
-            if fn.is_method and fn.owner_class:
+            if not fn.is_method:  # only top-level functions, not methods
+                fn_id = _fn_node_id(fn.name, file_path, fn.start_line)
+                eid = _edge_id(file_node_id, fn_id, EdgeType.CONTAINS)
+                graph.add_edge(Edge(id=eid, source_id=file_node_id, target_id=fn_id,
+                                    edge_type=EdgeType.CONTAINS, confidence=1.0))
+        for cls in result.classes:
+            cls_id = _class_node_id(cls.name, file_path, cls.start_line)
+            eid = _edge_id(file_node_id, cls_id, EdgeType.CONTAINS)
+            graph.add_edge(Edge(id=eid, source_id=file_node_id, target_id=cls_id,
+                                edge_type=EdgeType.CONTAINS, confidence=1.0))
+
+        # HAS_METHOD edges: Class -> Method
+        class_id_map: dict[str, str] = {}
+        for cls in result.classes:
+            class_id_map[cls.name] = _class_node_id(cls.name, file_path, cls.start_line)
+
+        for fn in result.functions:
+            if fn.is_method and fn.owner_class and fn.owner_class in class_id_map:
                 method_id = _fn_node_id(fn.name, file_path, fn.start_line)
-                # Find the owning class node
-                for cls in result.classes:
-                    if cls.name == fn.owner_class:
-                        class_id = _class_node_id(cls.name, file_path, cls.start_line)
-                        eid = _edge_id(class_id, method_id, EdgeType.HAS_METHOD)
-                        graph.add_edge(Edge(
-                            id=eid,
-                            source_id=class_id,
-                            target_id=method_id,
-                            edge_type=EdgeType.HAS_METHOD,
-                            confidence=0.95,
-                        ))
-                        break
+                cls_id = class_id_map[fn.owner_class]
+                eid = _edge_id(cls_id, method_id, EdgeType.HAS_METHOD)
+                graph.add_edge(Edge(id=eid, source_id=cls_id, target_id=method_id,
+                                    edge_type=EdgeType.HAS_METHOD, confidence=0.95))
+
+
+
+def _phase3b_resolve_heritage(
+    graph: KnowledgeGraph,
+    symbol_table: SymbolTable,
+    parse_results: dict[str, FileParseResult],
+) -> None:
+    """Resolve EXTENDS and DECORATES edges now that all symbols are registered."""
+    for file_path, result in parse_results.items():
+        # Build class ID map for this file
+        class_id_map: dict[str, str] = {}
+        for cls in result.classes:
+            class_id_map[cls.name] = _class_node_id(cls.name, file_path, cls.start_line)
+
+        # EXTENDS: Class -> Base Class
+        for cls in result.classes:
+            if not cls.bases:
+                continue
+            child_id = class_id_map[cls.name]
+            for base_name in cls.bases:
+                clean_base = base_name.split(".")[-1]
+                base_syms = symbol_table.lookup_global(clean_base)
+                base_sym = next((s for s in base_syms if s.label == NodeLabel.CLASS), None)
+                if base_sym and base_sym.node_id != child_id:
+                    eid = _edge_id(child_id, base_sym.node_id, EdgeType.EXTENDS)
+                    graph.add_edge(Edge(id=eid, source_id=child_id, target_id=base_sym.node_id,
+                                        edge_type=EdgeType.EXTENDS, confidence=0.85))
+
+        # DECORATES: Decorator -> decorated Function/Class
+        for fn in result.functions:
+            if not fn.decorators:
+                continue
+            fn_id = _fn_node_id(fn.name, file_path, fn.start_line)
+            for dec_name in fn.decorators:
+                clean_name = dec_name.split("(")[0].split(".")[-1]
+                dec_syms = symbol_table.lookup_global(clean_name)
+                dec_sym = next(
+                    (s for s in dec_syms if s.label in (NodeLabel.FUNCTION, NodeLabel.CLASS)),
+                    None,
+                )
+                if dec_sym and dec_sym.node_id != fn_id:
+                    eid = _edge_id(dec_sym.node_id, fn_id, EdgeType.DECORATES)
+                    graph.add_edge(Edge(id=eid, source_id=dec_sym.node_id, target_id=fn_id,
+                                        edge_type=EdgeType.DECORATES, confidence=0.8))
+
+        for cls in result.classes:
+            if not cls.decorators:
+                continue
+            cls_id = class_id_map[cls.name]
+            for dec_name in cls.decorators:
+                clean_name = dec_name.split("(")[0].split(".")[-1]
+                dec_syms = symbol_table.lookup_global(clean_name)
+                dec_sym = next(
+                    (s for s in dec_syms if s.label in (NodeLabel.FUNCTION, NodeLabel.CLASS)),
+                    None,
+                )
+                if dec_sym and dec_sym.node_id != cls_id:
+                    eid = _edge_id(dec_sym.node_id, cls_id, EdgeType.DECORATES)
+                    graph.add_edge(Edge(id=eid, source_id=dec_sym.node_id, target_id=cls_id,
+                                        edge_type=EdgeType.DECORATES, confidence=0.8))
 
 
 def _phase4_resolve_imports(
@@ -300,6 +387,10 @@ def run_pipeline(
     # Phase 3
     _progress("phase3: registering symbols")
     _phase3_register_symbols(graph, symbol_table, parse_results)
+
+    # Phase 3b: EXTENDS + DECORATES (need all symbols registered first)
+    _progress("phase3b: resolving inheritance + decorators")
+    _phase3b_resolve_heritage(graph, symbol_table, parse_results)
 
     # Phase 4
     _progress("phase4: resolving imports")
