@@ -370,11 +370,7 @@ function initGraph() {
     })
     .nodeRelSize(4)
     .nodeVal(n => (SIZES[n.label] || 2))
-    .nodeOpacity(n => {
-      if (!selectedId) return 0.85;
-      if (n.id === selectedId || highlightNodes.has(n.id)) return 1.0;
-      return 0.08; // nearly invisible
-    })
+    .nodeOpacity(0.85)
     .nodeLabel(n => {
       const c = COLORS[n.label] || '#cdd6f4';
       let t = '<div style="background:#181825ee;padding:6px 10px;border-radius:4px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:320px">';
