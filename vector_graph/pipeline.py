@@ -322,8 +322,14 @@ def _phase5_build_call_edges(
     graph: KnowledgeGraph,
     resolution: ResolutionContext,
     parse_results: dict[str, FileParseResult],
+    type_map=None,
+    symbol_table: SymbolTable | None = None,
 ) -> int:
-    """Build call edges using a resolution-context adapter."""
+    """Build call edges using a resolution-context adapter.
+
+    When type_map and symbol_table are provided, attribute calls are resolved
+    against the inferred receiver type first (phase 3c type-aware resolution).
+    """
     from vector_graph.analysis.call_graph import build_call_edges
 
     # Adapt ResolutionContext to the duck-typed interface expected by build_call_edges:
@@ -340,7 +346,10 @@ def _phase5_build_call_edges(
             return list(result.candidates), result.tier
 
     adapter = _ResolutionAdapter(resolution)
-    edges = build_call_edges(graph, parse_results, adapter)
+    edges = build_call_edges(
+        graph, parse_results, adapter,
+        type_map=type_map, symbol_table=symbol_table,
+    )
     for edge in edges:
         graph.add_edge(edge)
     return len(edges)
@@ -392,6 +401,11 @@ def run_pipeline(
     _progress("phase3b: resolving inheritance + decorators")
     _phase3b_resolve_heritage(graph, symbol_table, parse_results)
 
+    # Phase 3c: Type inference
+    _progress("phase3c: inferring variable types")
+    from vector_graph.analysis.type_inference import build_type_map
+    type_map = build_type_map(parse_results, symbol_table)
+
     # Phase 4
     _progress("phase4: resolving imports")
     all_files = set(file_paths)
@@ -401,7 +415,10 @@ def run_pipeline(
 
     # Phase 5
     _progress("phase5: building call edges")
-    call_count = _phase5_build_call_edges(graph, resolution, parse_results)
+    call_count = _phase5_build_call_edges(
+        graph, resolution, parse_results,
+        type_map=type_map, symbol_table=symbol_table,
+    )
 
     # Phase 6
     _progress("phase6: detecting communities")

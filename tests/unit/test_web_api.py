@@ -18,6 +18,7 @@ from vector_graph._types import (
 from vector_graph.graph.knowledge_graph import KnowledgeGraph
 from vector_graph.api.web_server import (
     build_context_response,
+    build_file_tree,
     build_graph_data,
     build_search_results,
     build_source_response,
@@ -193,3 +194,267 @@ class TestBuildSearchResults:
     def test_respects_limit(self, small_graph: KnowledgeGraph) -> None:
         results = build_search_results(small_graph, "e", limit=1)
         assert len(results) == 1
+
+    def test_node_without_file_path_returns_empty_file(self) -> None:
+        """Node with no file_path returns empty string for file field."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fn1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="orphan_fn", file_path=""),
+        ))
+        results = build_search_results(g, "orphan")
+        assert len(results) == 1
+        assert results[0]["file"] == ""
+
+
+# ---------------------------------------------------------------------------
+# build_graph_data — additional edge cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestBuildGraphDataAdditional:
+    def test_node_with_docstring_includes_doc_field(self) -> None:
+        """Node with docstring populates 'doc' field in output."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="f1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(
+                name="documented_fn",
+                file_path="/src/a.py",
+                docstring="Does something important.",
+            ),
+        ))
+        data = build_graph_data(g)
+        node = next(n for n in data["nodes"] if n["name"] == "documented_fn")
+        assert "doc" in node
+        assert "something important" in node["doc"]
+
+    def test_node_with_source_file_includes_source_snippet(self, tmp_path: Path) -> None:
+        """Function node backed by a real file gets 'source' snippet."""
+        src = tmp_path / "mod.py"
+        src.write_text("def greet():\n    return 'hello'\n")
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fn_greet",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(
+                name="greet",
+                file_path=str(src),
+                start_line=1,
+                end_line=2,
+            ),
+        ))
+        data = build_graph_data(g)
+        node = next(n for n in data["nodes"] if n["name"] == "greet")
+        assert "source" in node
+        assert "greet" in node["source"]
+
+    def test_source_snippet_truncated_for_large_file(self, tmp_path: Path) -> None:
+        """Source snippet is truncated to 2000 chars for large functions."""
+        src = tmp_path / "big.py"
+        # Write 100 lines each with 30 chars -> 3000 chars total
+        lines = ["x = " + "a" * 26 + "\n" for _ in range(100)]
+        src.write_text("".join(lines))
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fn_big",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(
+                name="big_fn",
+                file_path=str(src),
+                start_line=1,
+                end_line=100,
+            ),
+        ))
+        data = build_graph_data(g)
+        node = next(n for n in data["nodes"] if n["name"] == "big_fn")
+        assert "source" in node
+        assert "truncated" in node["source"]
+
+    def test_ros2_node_prioritized_before_function(self) -> None:
+        """ROS2Node appears before Function when sort by priority."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fn1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="plain_fn", file_path="/a.py"),
+        ))
+        g.add_node(GraphNode(
+            id="ros1",
+            label=NodeLabel.ROS2_NODE,
+            properties=NodeProperties(name="MyNode", file_path="/node.py"),
+        ))
+        data = build_graph_data(g, max_nodes=1)
+        # With max_nodes=1, only the highest priority (ROS2Node) should appear
+        assert len(data["nodes"]) == 1
+        assert data["nodes"][0]["label"] == "ROS2Node"
+
+    def test_oserror_on_source_read_skips_source_field(self, tmp_path: Path) -> None:
+        """OSError when reading source file is caught; no 'source' field."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fn_missing",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(
+                name="missing_fn",
+                file_path="/nonexistent/path/module.py",
+                start_line=1,
+                end_line=5,
+            ),
+        ))
+        data = build_graph_data(g)
+        node = next(n for n in data["nodes"] if n["name"] == "missing_fn")
+        # Should not have source field when file is unreadable
+        assert "source" not in node
+
+    def test_method_node_gets_source_snippet(self, tmp_path: Path) -> None:
+        """Method nodes (not just Function) also get source snippets."""
+        src = tmp_path / "cls.py"
+        src.write_text("class Foo:\n    def bar(self):\n        pass\n")
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="m1",
+            label=NodeLabel.METHOD,
+            properties=NodeProperties(
+                name="bar",
+                file_path=str(src),
+                start_line=2,
+                end_line=3,
+            ),
+        ))
+        data = build_graph_data(g)
+        node = next(n for n in data["nodes"] if n["name"] == "bar")
+        assert "source" in node
+
+
+# ---------------------------------------------------------------------------
+# build_source_response — additional cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestBuildSourceResponseAdditional:
+    def test_start_only_returns_context_window(self, source_dir: Path) -> None:
+        """Providing start without end returns context window around start line."""
+        result = build_source_response(
+            str(source_dir / "src" / "app.py"),
+            str(source_dir),
+            start=3,
+        )
+        assert "content" in result
+        assert result["language"] == "python"
+        assert result["startLine"] >= 1
+
+    def test_start_and_end_returns_range(self, source_dir: Path) -> None:
+        """Providing both start and end uses context around that range."""
+        result = build_source_response(
+            str(source_dir / "src" / "app.py"),
+            str(source_dir),
+            start=1,
+            end=4,
+            context_lines=0,
+        )
+        assert "content" in result
+        assert "def main" in result["content"]
+
+    def test_no_start_returns_full_file(self, source_dir: Path) -> None:
+        """No start/end returns the entire file content."""
+        result = build_source_response(
+            str(source_dir / "src" / "app.py"),
+            str(source_dir),
+        )
+        assert result["startLine"] == 1
+        assert result["total"] > 0
+
+
+# ---------------------------------------------------------------------------
+# build_file_tree
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestBuildFileTree:
+    def test_returns_dict_with_children(self, small_graph: KnowledgeGraph) -> None:
+        """build_file_tree returns dict with 'children' key."""
+        tree = build_file_tree(small_graph, "/src")
+        assert "children" in tree
+        assert "type" in tree
+        assert tree["type"] == "dir"
+
+    def test_file_node_appears_in_tree(self) -> None:
+        """File nodes are included in the tree."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="file1",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="app.py", file_path="/project/app.py"),
+        ))
+        tree = build_file_tree(g, "/project")
+        # Should have app.py somewhere in children
+        assert "app.py" in tree["children"]
+
+    def test_symbols_attached_to_file(self) -> None:
+        """Functions in a file appear as symbols under that file in the tree."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="file1",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="app.py", file_path="/project/app.py"),
+        ))
+        g.add_node(GraphNode(
+            id="fn1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(
+                name="main",
+                file_path="/project/app.py",
+                start_line=1,
+            ),
+        ))
+        tree = build_file_tree(g, "/project")
+        file_entry = tree["children"]["app.py"]
+        assert file_entry["type"] == "file"
+        symbols = file_entry["symbols"]
+        assert any(s["name"] == "main" for s in symbols)
+
+    def test_nested_directories_in_tree(self) -> None:
+        """Files in subdirectories create nested tree structure."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="file1",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="core.py", file_path="/project/pkg/core.py"),
+        ))
+        tree = build_file_tree(g, "/project")
+        # Should have pkg/ -> core.py
+        assert "pkg" in tree["children"]
+        pkg = tree["children"]["pkg"]
+        assert "core.py" in pkg["children"]
+
+    def test_symbols_sorted_by_line(self) -> None:
+        """Symbols within a file are sorted by start_line."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="file1",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="mod.py", file_path="/proj/mod.py"),
+        ))
+        g.add_node(GraphNode(
+            id="fn_b",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="beta", file_path="/proj/mod.py", start_line=10),
+        ))
+        g.add_node(GraphNode(
+            id="fn_a",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="alpha", file_path="/proj/mod.py", start_line=2),
+        ))
+        tree = build_file_tree(g, "/proj")
+        symbols = tree["children"]["mod.py"]["symbols"]
+        names = [s["name"] for s in symbols]
+        assert names.index("alpha") < names.index("beta")
+
+    def test_empty_graph_returns_empty_children(self) -> None:
+        """Empty graph produces tree with empty children."""
+        g = KnowledgeGraph()
+        tree = build_file_tree(g, "/project")
+        assert tree["children"] == {}

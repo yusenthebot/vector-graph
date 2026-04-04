@@ -9,6 +9,7 @@ from vector_graph._types import (
     GraphNode,
     NodeLabel,
 )
+from vector_graph.graph.protocols import GraphProtocol
 
 # ---------------------------------------------------------------------------
 # Entry point names that are never considered orphans
@@ -65,7 +66,7 @@ def _is_entry_point(node: GraphNode) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
-def find_orphans(graph: object) -> list[GraphNode]:
+def find_orphans(graph: GraphProtocol) -> list[GraphNode]:
     """Find unreachable functions/classes with no incoming edges.
 
     A node is an orphan if:
@@ -83,12 +84,12 @@ def find_orphans(graph: object) -> list[GraphNode]:
 
     # Build set of nodes that have at least one qualifying incoming edge
     has_incoming: set[str] = set()
-    for edge in graph.iter_edges():  # type: ignore[attr-defined]
+    for edge in graph.iter_edges():
         if edge.edge_type in _INCOMING_EDGE_TYPES:
             has_incoming.add(edge.target_id)
 
     orphans: list[GraphNode] = []
-    for node in graph.iter_nodes():  # type: ignore[attr-defined]
+    for node in graph.iter_nodes():
         if node.label not in valid_labels:
             continue
         if _is_test_file(node.properties.file_path):

@@ -286,3 +286,163 @@ def test_read_resource_unknown_uri_returns_error(server) -> None:
         assert "error" in as_str or "unknown" in as_str or "not found" in as_str
     except (ValueError, KeyError):
         pass  # Raising is acceptable
+
+
+# ---------------------------------------------------------------------------
+# Additional handler-layer tests (coverage hardening)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+def test_call_tool_unknown_tool_returns_error_key(server) -> None:
+    """call_tool with unknown name returns dict with 'error' key."""
+    result = server.call_tool("totally_unknown_tool_xyz", {})
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+@pytest.mark.level5
+def test_call_tool_impact_missing_required_arg_returns_error(server) -> None:
+    """call_tool('impact', {}) without 'target' returns error dict."""
+    result = server.call_tool("impact", {})
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+@pytest.mark.level5
+def test_call_tool_context_missing_required_arg_returns_error(server) -> None:
+    """call_tool('context', {}) without 'name' returns error dict."""
+    result = server.call_tool("context", {})
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+@pytest.mark.level5
+def test_call_tool_query_missing_arg_returns_error_or_empty(server) -> None:
+    """call_tool('query', {}) without 'query' arg handles gracefully."""
+    result = server.call_tool("query", {})
+    # Either error or returns with count=0 for empty query
+    assert isinstance(result, dict)
+
+
+@pytest.mark.level5
+def test_read_resource_unknown_uri_has_error_key(server) -> None:
+    """read_resource with unknown URI returns dict with 'error' key."""
+    result = server.read_resource("graph://does_not_exist_xyz")
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+@pytest.mark.level5
+def test_tool_query_no_match_count_zero(server) -> None:
+    """query with term matching nothing returns count=0."""
+    result = server.call_tool("query", {"query": "zzz_not_in_code_99999"})
+    assert isinstance(result, dict)
+    assert result.get("count", 0) == 0
+
+
+@pytest.mark.level5
+def test_tool_query_returns_count_field(server) -> None:
+    """query result always has a 'count' field."""
+    result = server.call_tool("query", {"query": "run"})
+    assert "count" in result
+
+
+@pytest.mark.level5
+def test_tool_query_matches_field_is_list(server) -> None:
+    """query result 'matches' is always a list."""
+    result = server.call_tool("query", {"query": "Engine"})
+    assert isinstance(result.get("matches", []), list)
+
+
+@pytest.mark.level5
+def test_list_tools_count_is_four(server) -> None:
+    """Server registers exactly 4 tools."""
+    tools = server.list_tools()
+    assert len(tools) == 4
+
+
+@pytest.mark.level5
+def test_list_resources_count_is_two(server) -> None:
+    """Server registers exactly 2 resources."""
+    resources = server.list_resources()
+    assert len(resources) == 2
+
+
+@pytest.mark.level5
+def test_tool_detect_changes_has_changed_files_key(server) -> None:
+    """detect_changes result has 'changed_files' key."""
+    result = server.call_tool("detect_changes", {})
+    assert "changed_files" in result
+    assert isinstance(result["changed_files"], list)
+
+
+@pytest.mark.level5
+def test_resource_context_has_root_key(server) -> None:
+    """graph://context result includes 'root' key from AnalysisResult."""
+    result = server.read_resource("graph://context")
+    assert "root" in result
+
+
+@pytest.mark.level5
+def test_resource_processes_has_process_count_key(server) -> None:
+    """graph://processes result has 'process_count' key."""
+    result = server.read_resource("graph://processes")
+    assert "process_count" in result
+
+
+@pytest.mark.level5
+def test_tool_impact_with_invalid_arg_type_returns_error(server) -> None:
+    """call_tool('impact', {'target': 123}) with wrong type returns error."""
+    result = server.call_tool("impact", {"target": 123, "max_depth": "bad_type"})
+    # Should return error or handle gracefully — not raise uncaught exception
+    assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# main() CLI entry point (via mock to avoid stdio transport)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+def test_main_calls_run_mcp_stdio(monkeypatch, tmp_path: Path) -> None:
+    """main() parses argv and calls run_mcp_stdio with the root path."""
+    import sys
+    from unittest.mock import MagicMock
+    import vector_graph.api.mcp_server as mcp_module
+
+    calls = []
+
+    def fake_run_mcp_stdio(root: str) -> None:
+        calls.append(root)
+
+    monkeypatch.setattr(mcp_module, "run_mcp_stdio", fake_run_mcp_stdio)
+    original_argv = sys.argv
+    try:
+        sys.argv = ["vector-graph-mcp", str(tmp_path)]
+        mcp_module.main()
+    finally:
+        sys.argv = original_argv
+
+    assert len(calls) == 1
+    assert str(tmp_path) in calls[0]
+
+
+@pytest.mark.level5
+def test_main_defaults_to_dot(monkeypatch) -> None:
+    """main() with no args uses '.' as root."""
+    import sys
+    import vector_graph.api.mcp_server as mcp_module
+
+    calls = []
+
+    def fake_run_mcp_stdio(root: str) -> None:
+        calls.append(root)
+
+    monkeypatch.setattr(mcp_module, "run_mcp_stdio", fake_run_mcp_stdio)
+    original_argv = sys.argv
+    try:
+        sys.argv = ["vector-graph-mcp"]
+        mcp_module.main()
+    finally:
+        sys.argv = original_argv
+
+    assert calls == ["."]

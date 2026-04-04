@@ -92,6 +92,14 @@ class KnowledgeGraph:
     def get_edge(self, edge_id: str) -> Edge | None:
         return self._edges.get(edge_id)
 
+    def remove_edge(self, edge_id: str) -> None:
+        """Remove an edge by ID and update adjacency indexes. Idempotent."""
+        edge = self._edges.get(edge_id)
+        if edge is None:
+            return
+        self._remove_edge_from_indexes(edge)
+        del self._edges[edge_id]
+
     @property
     def edge_count(self) -> int:
         return len(self._edges)

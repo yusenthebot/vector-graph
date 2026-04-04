@@ -14,6 +14,7 @@ from vector_graph._types import (
     EdgeType,
     NodeLabel,
 )
+from vector_graph.graph.protocols import GraphProtocol
 
 # ---------------------------------------------------------------------------
 # networkx optional import
@@ -90,11 +91,11 @@ def _networkx_communities(
 # Label derivation
 # ---------------------------------------------------------------------------
 
-def _community_label(members: list[str], graph: object) -> str:
+def _community_label(members: list[str], graph: GraphProtocol) -> str:
     """Derive a label from the common file path directory of members."""
     paths: list[str] = []
     for mid in members:
-        node = graph.get_node(mid)  # type: ignore[attr-defined]
+        node = graph.get_node(mid)
         if node:
             paths.append(node.properties.file_path)
 
@@ -149,7 +150,7 @@ def _compute_cohesion(members: list[str], edge_index: dict[str, set[str]]) -> fl
 # ---------------------------------------------------------------------------
 
 def detect_communities(
-    graph: object,
+    graph: GraphProtocol,
     min_confidence: float = 0.5,
 ) -> list[CommunityInfo]:
     """Detect code communities/clusters.
@@ -167,7 +168,7 @@ def detect_communities(
     # Collect nodes that are functions/methods/classes (skip file/folder nodes)
     valid_labels = {NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS}
     node_ids = [
-        n.id for n in graph.iter_nodes()  # type: ignore[attr-defined]
+        n.id for n in graph.iter_nodes()
         if n.label in valid_labels
     ]
 
@@ -177,7 +178,7 @@ def detect_communities(
     # Collect high-confidence edges between valid nodes
     node_set = set(node_ids)
     edges: list[tuple[str, str]] = []
-    for edge in graph.iter_edges():  # type: ignore[attr-defined]
+    for edge in graph.iter_edges():
         if edge.confidence < min_confidence:
             continue
         if edge.source_id in node_set and edge.target_id in node_set:

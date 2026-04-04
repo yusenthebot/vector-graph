@@ -13,6 +13,7 @@ from vector_graph._types import (
     NodeLabel,
     ProcessTrace,
 )
+from vector_graph.graph.protocols import GraphProtocol
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ def _name_score(name: str) -> float:
     return score
 
 
-def _entry_point_score(node_id: str, graph: object) -> float:
+def _entry_point_score(node_id: str, graph: GraphProtocol) -> float:
     """Score how likely a node is to be an entry point.
 
     Score factors:
@@ -52,7 +53,7 @@ def _entry_point_score(node_id: str, graph: object) -> float:
     - Number of incoming CALLS edges (callers) — lower is better
     - Name pattern bonus
     """
-    node = graph.get_node(node_id)  # type: ignore[attr-defined]
+    node = graph.get_node(node_id)
     if node is None:
         return 0.0
 
@@ -60,9 +61,9 @@ def _entry_point_score(node_id: str, graph: object) -> float:
     if node.label not in (NodeLabel.FUNCTION, NodeLabel.METHOD):
         return 0.0
 
-    out_edges = [e for e in graph.get_edges_from(node_id)  # type: ignore[attr-defined]
+    out_edges = [e for e in graph.get_edges_from(node_id)
                  if e.edge_type == EdgeType.CALLS]
-    in_edges = [e for e in graph.get_edges_to(node_id)  # type: ignore[attr-defined]
+    in_edges = [e for e in graph.get_edges_to(node_id)
                 if e.edge_type == EdgeType.CALLS]
 
     callee_count = len(out_edges)
@@ -88,7 +89,7 @@ def _trace_id(entry_id: str, trace_nodes: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def detect_execution_flows(
-    graph: object,
+    graph: GraphProtocol,
     max_depth: int = 10,
     max_branching: int = 4,
     min_steps: int = 3,
@@ -110,7 +111,7 @@ def detect_execution_flows(
         Cap on number of returned traces.
     """
     # Collect all candidate entry points with their score
-    all_nodes = list(graph.iter_nodes())  # type: ignore[attr-defined]
+    all_nodes = list(graph.iter_nodes())
     candidates: list[tuple[float, str]] = []
 
     for node in all_nodes:
@@ -144,7 +145,7 @@ def detect_execution_flows(
                 continue
             seen_ids.add(tid)
 
-            entry_node = graph.get_node(entry_id)  # type: ignore[attr-defined]
+            entry_node = graph.get_node(entry_id)
             entry_name = entry_node.properties.name if entry_node else entry_id
             terminal_id = trace_nodes[-1]
 
@@ -165,7 +166,7 @@ def detect_execution_flows(
 
 
 def _bfs_trace(
-    graph: object,
+    graph: GraphProtocol,
     entry_id: str,
     max_depth: int,
     max_branching: int,
@@ -188,7 +189,7 @@ def _bfs_trace(
             continue
 
         out_edges = [
-            e for e in graph.get_edges_from(node_id)  # type: ignore[attr-defined]
+            e for e in graph.get_edges_from(node_id)
             if e.edge_type == EdgeType.CALLS
         ]
 

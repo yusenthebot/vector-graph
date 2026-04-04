@@ -339,6 +339,32 @@ class CommunityInfo:
 
 
 @dataclass(frozen=True)
+class TypeBinding:
+    """Inferred type for a variable in a scope."""
+
+    variable_name: str
+    inferred_type: str
+    source_file: str
+    scope: str
+    line: int
+    confidence: float = 0.9
+
+
+@dataclass(frozen=True)
+class QueryResult:
+    """Result of a graph query."""
+
+    query_type: str
+    params: dict[str, str]
+    nodes: tuple[GraphNode, ...] = ()
+    edges: tuple[Edge, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return len(self.nodes)
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     """Complete analysis result from CodeGraph.analyze()."""
 

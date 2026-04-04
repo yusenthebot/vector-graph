@@ -9,6 +9,7 @@ from vector_graph._types import (
     ImpactEntry,
     ImpactResult,
 )
+from vector_graph.graph.protocols import GraphProtocol
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ def _compute_risk(entries: list[ImpactEntry]) -> str:
 # ---------------------------------------------------------------------------
 
 def analyze_impact(
-    graph: object,
+    graph: GraphProtocol,
     target_id: str,
     direction: str = "upstream",
     max_depth: int = 3,
@@ -64,7 +65,7 @@ def analyze_impact(
     relation_types:
         If given, only traverse edges of these types.
     """
-    target_node = graph.get_node(target_id)  # type: ignore[attr-defined]
+    target_node = graph.get_node(target_id)
 
     # Provide sensible defaults even for unknown targets
     target_name = target_node.properties.name if target_node else target_id
@@ -88,7 +89,7 @@ def analyze_impact(
     # For Class nodes: also seed from all methods (HAS_METHOD edges)
     seed_ids = [target_id]
     if target_node is not None and target_node.label.value == "Class":
-        for edge in graph.get_edges_from(target_id):  # type: ignore[attr-defined]
+        for edge in graph.get_edges_from(target_id):
             if edge.edge_type == EdgeType.HAS_METHOD:
                 seed_ids.append(edge.target_id)
                 visited.add(edge.target_id)
@@ -96,9 +97,9 @@ def analyze_impact(
     # Seed from direct neighbors of all seed IDs
     for sid in seed_ids:
         if direction == "upstream":
-            seed_edges = graph.get_edges_to(sid)  # type: ignore[attr-defined]
+            seed_edges = graph.get_edges_to(sid)
         else:
-            seed_edges = graph.get_edges_from(sid)  # type: ignore[attr-defined]
+            seed_edges = graph.get_edges_from(sid)
         _enqueue_edges(queue, seed_edges, depth=1, direction=direction,
                        min_confidence=min_confidence, relation_types=relation_types,
                        visited=visited)
@@ -106,7 +107,7 @@ def analyze_impact(
     while queue:
         node_id, depth, edge_type, confidence = queue.popleft()
 
-        node = graph.get_node(node_id)  # type: ignore[attr-defined]
+        node = graph.get_node(node_id)
         if node is None:
             continue
 
@@ -121,9 +122,9 @@ def analyze_impact(
 
         if depth < max_depth:
             if direction == "upstream":
-                next_edges = graph.get_edges_to(node_id)  # type: ignore[attr-defined]
+                next_edges = graph.get_edges_to(node_id)
             else:
-                next_edges = graph.get_edges_from(node_id)  # type: ignore[attr-defined]
+                next_edges = graph.get_edges_from(node_id)
             _enqueue_edges(queue, next_edges, depth=depth + 1, direction=direction,
                            min_confidence=min_confidence, relation_types=relation_types,
                            visited=visited)

@@ -15,6 +15,7 @@ from vector_graph._types import (
     ImpactResult,
     NodeLabel,
     ProcessTrace,
+    QueryResult,
 )
 from vector_graph.graph.knowledge_graph import KnowledgeGraph
 
@@ -114,6 +115,50 @@ class CodeGraph:
         assert graph is not None
         return find_orphans(graph)
 
+    def query(self, query_type: str, **kwargs: str) -> QueryResult:
+        """Execute a structured query against the graph.
+
+        Parameters
+        ----------
+        query_type:
+            One of: callers_of, callees_of, subclasses_of, implementations_of,
+            path_between, by_file, by_pattern, by_decorator.
+        **kwargs:
+            Query-specific parameters (name, source, target, file_path, pattern, decorator).
+
+        Returns
+        -------
+        QueryResult with .nodes, .edges, .count populated.
+        Returns empty QueryResult for unknown query types.
+        """
+        self._ensure_analyzed()
+        from vector_graph.analysis.query import execute_query
+
+        assert self._graph is not None
+        return execute_query(self._graph, query_type, **kwargs)
+
+    def export(self, format: str = "json") -> str:
+        """Export the graph to a string format.
+
+        Parameters
+        ----------
+        format:
+            "json" (default) or "dot".
+
+        Returns
+        -------
+        str
+            Serialised graph as a JSON or DOT string.
+        """
+        self._ensure_analyzed()
+        from vector_graph.analysis.export import export_dot, export_json
+
+        graph = self._graph
+        assert graph is not None
+        if format == "dot":
+            return export_dot(graph)
+        return export_json(graph)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -166,6 +211,12 @@ def main() -> None:
     )
     parser.add_argument("--orphans", action="store_true", help="List orphan functions/classes")
     parser.add_argument("--depth", type=int, default=3, metavar="N", help="Max BFS depth (default: 3)")
+    parser.add_argument(
+        "--export",
+        choices=["json", "dot"],
+        metavar="FORMAT",
+        help="Export graph to FORMAT (json or dot) and print to stdout",
+    )
     args = parser.parse_args()
 
     from vector_graph.api.visualize import print_summary, print_impact
@@ -173,6 +224,9 @@ def main() -> None:
     cg = CodeGraph(args.root)
     result = cg.analyze()
     print_summary(result)
+
+    if args.export:
+        print(cg.export(args.export))
 
     if args.impact:
         impact = cg.impact(args.impact, direction=args.direction, max_depth=args.depth)

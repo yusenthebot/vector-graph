@@ -182,3 +182,120 @@ def test_msg_type_stored_on_topic_node(tmp_path) -> None:
     scan_topic = next((t for t in topics if t.properties.topic_name == "/scan"), None)
     assert scan_topic is not None
     assert scan_topic.properties.msg_type == "LaserScan"
+
+
+# ---------------------------------------------------------------------------
+# Tests — empty / edge cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level3
+def test_empty_ros2_node_list_does_not_modify_graph() -> None:
+    """build_ros2_overlay with empty list leaves graph unchanged."""
+    kg = KnowledgeGraph()
+    build_ros2_overlay(kg, [])
+    assert list(kg.iter_nodes()) == []
+    assert list(kg.iter_edges()) == []
+
+
+@pytest.mark.level3
+def test_msg_defs_provided_do_not_crash() -> None:
+    """build_ros2_overlay accepts msg_defs parameter without error."""
+    from vector_graph.ros2.msg_parser import MsgDefinition
+    kg = KnowledgeGraph()
+    nodes, _ = _build_graph_from_src(("/fake/sensor_node.py", SENSOR_NODE_SRC))
+    # Rebuild overlay with msg_defs — just verify no exception
+    from vector_graph.ros2.node_extractor import extract_ros2_nodes
+    ros2_nodes = extract_ros2_nodes("/fake/sensor_node.py", source=SENSOR_NODE_SRC)
+    msg_def = MsgDefinition(name="LaserScan", file_path="/fake/LaserScan.msg", fields=())
+    build_ros2_overlay(kg, ros2_nodes, msg_defs=[msg_def])
+    topics = list(kg.get_nodes_by_label(NodeLabel.TOPIC))
+    assert len(topics) >= 1
+
+
+@pytest.mark.level3
+def test_service_node_added_to_graph() -> None:
+    """create_service() creates a SERVICE node in the graph."""
+    src = textwrap.dedent("""\
+        from rclpy.node import Node
+        from std_srvs.srv import SetBool
+
+        class ServiceNode(Node):
+            def __init__(self):
+                super().__init__('svc_node')
+                self._svc = self.create_service(SetBool, '/toggle', self._cb)
+            def _cb(self, req, resp):
+                return resp
+    """)
+    kg, _ = _build_graph_from_src(("/fake/svc_node.py", src))
+    services = list(kg.get_nodes_by_label(NodeLabel.SERVICE))
+    assert len(services) >= 1
+    svc_names = {s.properties.name for s in services}
+    assert "/toggle" in svc_names
+
+
+@pytest.mark.level3
+def test_provides_service_edge_created() -> None:
+    """PROVIDES_SERVICE edge connects ROS2_NODE to its SERVICE node."""
+    src = textwrap.dedent("""\
+        from rclpy.node import Node
+        from std_srvs.srv import SetBool
+
+        class ServiceNode(Node):
+            def __init__(self):
+                super().__init__('svc_node')
+                self._svc = self.create_service(SetBool, '/toggle', self._cb)
+            def _cb(self, req, resp):
+                return resp
+    """)
+    kg, _ = _build_graph_from_src(("/fake/svc_node.py", src))
+    svc_edges = [e for e in kg.iter_edges() if e.edge_type == EdgeType.PROVIDES_SERVICE]
+    assert len(svc_edges) == 1
+
+
+@pytest.mark.level3
+def test_action_server_node_added_to_graph() -> None:
+    """ActionServer creates an ACTION node in the graph."""
+    src = textwrap.dedent("""\
+        from rclpy.node import Node
+        from rclpy.action import ActionServer
+        from example_interfaces.action import Fibonacci
+
+        class ActionNode(Node):
+            def __init__(self):
+                super().__init__('action_node')
+                self._as = ActionServer(self, Fibonacci, '/fibonacci', self._cb)
+            def _cb(self, goal):
+                pass
+    """)
+    kg, _ = _build_graph_from_src(("/fake/action_node.py", src))
+    actions = list(kg.get_nodes_by_label(NodeLabel.ACTION))
+    assert len(actions) >= 1
+
+
+@pytest.mark.level3
+def test_idempotent_topic_node_creation() -> None:
+    """Calling build_ros2_overlay twice does not duplicate topic nodes."""
+    from vector_graph.ros2.node_extractor import extract_ros2_nodes
+    kg = KnowledgeGraph()
+    ros2_nodes = extract_ros2_nodes("/fake/sensor_node.py", source=SENSOR_NODE_SRC)
+    build_ros2_overlay(kg, ros2_nodes)
+    build_ros2_overlay(kg, ros2_nodes)
+    topics = list(kg.get_nodes_by_label(NodeLabel.TOPIC))
+    # Same number as a single call — deduplication holds
+    kg2 = KnowledgeGraph()
+    build_ros2_overlay(kg2, ros2_nodes)
+    assert len(list(kg2.get_nodes_by_label(NodeLabel.TOPIC))) == len(topics)
+
+
+@pytest.mark.level3
+def test_duplicate_topic_from_multiple_nodes_deduplicated() -> None:
+    """Two nodes referencing the same topic result in one TOPIC node."""
+    kg, _ = _build_graph_from_src(
+        ("/fake/sensor_node.py", SENSOR_NODE_SRC),
+        ("/fake/controller_node.py", CONTROLLER_NODE_SRC),
+    )
+    cmd_topics = [
+        t for t in kg.get_nodes_by_label(NodeLabel.TOPIC)
+        if t.properties.topic_name == "/cmd_vel"
+    ]
+    assert len(cmd_topics) == 1
