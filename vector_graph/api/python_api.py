@@ -253,7 +253,14 @@ def main() -> None:
         metavar="FORMAT",
         help="Export graph to FORMAT (json or dot) and print to stdout",
     )
+    parser.add_argument("--install-hook", action="store_true", help="Install Claude Code PreToolUse hook")
     args = parser.parse_args()
+
+    # Handle --install-hook before anything else
+    if args.install_hook:
+        from vector_graph.hooks.install import install_hook_auto
+        install_hook_auto()
+        return
 
     from vector_graph.api.visualize import print_summary, print_impact
 
