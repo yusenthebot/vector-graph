@@ -2,35 +2,89 @@
 
 ## Gamma
 - **Status**: done
-- **Task**: MCP server — Phase 5 (L5 tests + implementation + L2 self-analysis integration)
-- **Result**: 24 tests written and passing (19 L5 unit + 5 L2 integration) — zero regressions
-- **Files created**:
-  - tests/unit/test_mcp_server.py (19 L5 tests — handler methods tested directly)
-  - tests/integration/test_self_analysis.py (5 L2 integration tests on real codebase)
-  - vector_graph/api/mcp_server.py (VectorGraphMCPServer class + run_mcp_stdio + main)
+- **Task**: T9 — Integration tests + final verification for vector-graph v0.3.0
+- **Branch**: feat/gamma-integration-tests
+- **Result**: 8 integration tests written, all 13 integration tests pass, 502/502 total pass, 90.19% coverage
+- **Files modified**:
+  - tests/integration/test_self_analysis.py (+8 tests: AC3/AC4/AC5/AC10 coverage)
+- **AC verification**:
+  - AC1/AC2: type-aware resolution active, global ratio 6.5% (<<80%)
+  - AC3: pipeline completes in 3.8s on self-analysis (< 5s)
+  - AC4: all 8 query types exercised (callers_of, subclasses_of, by_file, by_pattern)
+  - AC5: JSON export validated (node/edge count match, json.loads passes); DOT starts with 'digraph'
+  - AC6: file watcher tests covered by T7 (Alpha)
+  - AC7: grep returns empty — no graph: object params remain
+  - AC8: 90.19% overall coverage, no module below 60%
+  - AC9: all original 330 tests pass (502 total)
+  - AC10: GLOBAL-tier 6.5% of CALLS, well under 80% threshold
 
 ## Alpha
-- **Status**: done
-- **Task**: ROS2 extraction layer — Phase 3 (L3 tests + implementation)
-- **Result**: 51 L3 tests written and passing (305 total — zero regressions)
+- **Status**: in_progress
+- **Task**: T1+T2 — ChangeTracker + SSE Server for vector-graph v0.4.0
+- **Branch**: feat/alpha-change-tracker-sse
+- **Previous Task**: Proper Three.js Nebula Integration
+- **Branch**: feat/alpha-threejs-nebula
+- **Result**: 577/577 tests pass (+9 new tests), zero regressions
+- **Files modified**:
+  - vector_graph/api/web_server.py (script tags: three@0.137.0 + postprocessing CDNs before 3d-force-graph; removed _isDust/_isLabel data-driven code from build_graph_data and all JS callbacks; added updateNebulae() with SphereGeometry/PointsMaterial/TorusGeometry/Sprite; nebulaGroup state var; lifecycle hooks in initGraph; nebula highlight/reset in selectNode/deselectNode/focusGroup)
+  - tests/unit/test_web_api.py (fixed 2 tests: max_nodes_limit and ros2_node_prioritized_before_function; added 9 new TestThreeJsNebulaIntegration tests)
+- **Task**: Code Health Metrics Engine (complexity, fan-in/out, module health, web viz, MCP tools)
+- **Branch**: feat/alpha-health-metrics
+- **Result**: 568/568 tests pass (+37 new tests), zero regressions
 - **Files created**:
-  - tests/unit/test_ros2_extractor.py (16 tests)
-  - tests/unit/test_launch_parser.py (13 tests)
-  - tests/unit/test_msg_parser.py (11 tests)
-  - tests/unit/test_ros2_graph.py (11 tests)
-  - vector_graph/ros2/node_extractor.py
-  - vector_graph/ros2/launch_parser.py
-  - vector_graph/ros2/msg_parser.py
-  - vector_graph/ros2/ros2_graph.py
+  - vector_graph/analysis/complexity.py (ComplexityScore, ModuleHealth, HealthReport, compute_cyclomatic_complexity, analyze_complexity, analyze_fan, analyze_module_health, build_health_report)
+  - tests/unit/test_complexity.py (32 tests: cyclomatic, risk, complexity, fan, module health, god detection, health report)
+- **Files modified**:
+  - vector_graph/api/python_api.py (add CodeGraph.health() method)
+  - vector_graph/api/web_server.py (build_graph_data: optional health_map param, health data on nodes; serve: pre-compute health, /api/health endpoint; JS: healthMode toggle, nodeColor health gradient, nodeVal scales with complexity, Filters panel toggle button)
+  - vector_graph/api/mcp_server.py (add health + complexity tools to list_tools and call_tool dispatch)
+  - tests/unit/test_mcp_server.py (update tool count assertions 8->10, add 5 new health/complexity tool tests)
+- **Task**: Nebula Visualization — Web UI group clustering + nebula shells
+- **Branch**: feat/alpha-nebula-viz
+- **Result**: 531/531 tests pass, zero regressions
+- **Files modified**:
+  - vector_graph/api/web_server.py (_HTML template: Three.js CDN, GROUP_COLORS, clusterForce, updateNebulae, buildGroupsPanel, focusGroup, nebula highlight hooks)
+- **Task**: Tier 1 — MCP tool expansion + dependency cycle detection
+- **Branch**: feat/alpha-cycles-mcp-expansion
+- **Result**: 14 cycle tests + 15 MCP tests written (TDD: RED -> GREEN), 531/531 total pass
+- **Files created**:
+  - vector_graph/analysis/cycles.py (CycleInfo frozen dataclass + iterative Tarjan's SCC)
+  - tests/unit/test_cycles.py (14 tests: no_cycles, simple, triangle, multiple, self_loop, imports/extends edges, structural ignore, empty, mixed)
+- **Files modified**:
+  - vector_graph/api/python_api.py (add cycles() method to CodeGraph)
+  - vector_graph/api/mcp_server.py (add 4 new tools: graph_query, export, cycles, orphans; add handler methods; update dispatch table)
+  - tests/unit/test_mcp_server.py (15 new tests, update count assertion 4->8)
+- **Branch**: feat/alpha-incremental-edge-rebuild
+- **Result**: 5 new tests written (TDD: RED -> GREEN), 420/420 total pass, zero regressions
+- **Files modified**:
+  - tests/unit/test_file_watcher.py (+5 tests: IMPORTS rebuild, node preservation, delete edge cleanup, new file edge, remove_edge unit test)
+  - vector_graph/graph/knowledge_graph.py (add remove_edge — removes edge + cleans adjacency indexes, idempotent)
+  - vector_graph/watch/file_watcher.py (add from_pipeline classmethod, _process_event_with_source test helper, _register_file_in_graph_from_result helper, _rebuild_edges_for_file — removes stale IMPORTS/CALLS edges then re-resolves; _process_event now rebuilds edges on modify/create)
 
 ## Beta
 - **Status**: done
-- **Task**: File watcher — Phase 4 (L4 tests + implementation)
-- **Branch**: feat/beta-file-watcher
-- **Result**: 16 L4 tests written and passing — TDD complete
+- **Task**: T3 — Smart MCP Tools for vector-graph v0.4.0
+- **Branch**: feat/beta-smart-mcp-tools
+- **Result**: 5 new MCP tools, +25 tests (13 mcp_server + 7 suggest_tests + 5 counted in mcp_server via PROJECT_ROOT), 595/595 pass, zero regressions
 - **Files created**:
-  - tests/unit/test_file_watcher.py (16 tests, all @pytest.mark.level4)
-  - vector_graph/watch/file_watcher.py (GraphWatcher + _Handler)
-- **Note**: `python3 -m pytest tests/unit/test_file_watcher.py -v` blocked by ROS2/Jazzy
-  launch_testing hook trying to collect Alpha's incomplete ros2 stubs (pre-existing conflict).
-  Workaround: `--override-ini="python_files=test_file_watcher.py"` — all 16 pass.
+  - vector_graph/analysis/suggest_tests.py (BFS upstream suggest_tests, TestSuggestion dataclass)
+  - tests/unit/test_suggest_tests.py (7 tests: direct callers, orphan, transitive, unknown, multiple, sort, non-call edges)
+- **Files modified**:
+  - vector_graph/api/mcp_server.py (add _change_tracker attr; 5 new tools in list_tools + dispatch; _tool_impact_preview, _tool_safe_to_modify, _tool_what_changed, _tool_suggest_tests, _tool_dependency_check; module-level _risk_suggestion, _file_has_tests helpers)
+  - tests/unit/test_mcp_server.py (update count 10->15; +13 new tests for 5 smart tools)
+- **Tool count**: 10 -> 15
+- **Branch**: feat/beta-coverage-hardening
+- **Result**: 103 new tests written, overall coverage 83.18% -> 90.12%, 494/494 pass, zero regressions
+- **Files created**:
+  - tests/unit/test_visualize.py (33 tests: print_summary x11, print_impact x13, export_html x9)
+  - tests/unit/test_python_api.py (26 tests: analyze, impact, trace, orphans, query, export, CLI main)
+- **Files modified**:
+  - tests/unit/test_web_api.py (+22 tests: docstring, source snippet, source range, build_file_tree, search no-file)
+  - tests/unit/test_mcp_server.py (+16 tests: handler layer, main() mock, unknown tool/resource, arg errors)
+  - tests/unit/test_ros2_graph.py (+7 tests: empty list, msg_defs, service, action, idempotency)
+- **Coverage achieved**:
+  - visualize.py: 0% -> 99%
+  - python_api.py: 47% -> 98%
+  - web_server.py: 51% -> 69% (>= 65% target met)
+  - mcp_server.py: 68% -> 73% (lines 308-365 are async stdio transport, not unit-testable)
+  - ros2_graph.py: 72% -> 100%

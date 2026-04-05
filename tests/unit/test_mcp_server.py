@@ -356,9 +356,9 @@ def test_tool_query_matches_field_is_list(server) -> None:
 
 @pytest.mark.level5
 def test_list_tools_count_is_eight(server) -> None:
-    """Server registers exactly 10 tools (4 original + 4 new + 2 health)."""
+    """Server registers exactly 15 tools (10 original + 5 new smart tools)."""
     tools = server.list_tools()
-    assert len(tools) == 10
+    assert len(tools) == 15
 
 
 @pytest.mark.level5
@@ -476,9 +476,9 @@ def server_cyclic(cyclic_project: Path):
 
 @pytest.mark.level5
 def test_mcp_list_tools_count(server) -> None:
-    """list_tools returns exactly 10 tools after adding 4 + 2 new ones."""
+    """list_tools returns exactly 15 tools after adding 5 new smart tools."""
     tools = server.list_tools()
-    assert len(tools) == 10
+    assert len(tools) == 15
 
 
 @pytest.mark.level5
@@ -667,3 +667,116 @@ def test_mcp_health_tools_in_list(server) -> None:
     names = {t["name"] for t in tools}
     assert "health" in names
     assert "complexity" in names
+
+
+# ---------------------------------------------------------------------------
+# New smart tools: impact_preview, safe_to_modify, what_changed,
+#                  suggest_tests, dependency_check
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.level5
+def test_mcp_impact_preview_known() -> None:
+    """impact_preview returns risk + affected count for known function."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    srv = VectorGraphMCPServer(PROJECT_ROOT)
+    result = srv.call_tool("impact_preview", {"name": "add_node"})
+    assert "risk" in result
+    assert "total_affected" in result
+    assert result["total_affected"] >= 0
+
+
+@pytest.mark.level5
+def test_mcp_impact_preview_unknown() -> None:
+    """impact_preview for unknown name returns LOW risk."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    srv = VectorGraphMCPServer(PROJECT_ROOT)
+    result = srv.call_tool("impact_preview", {"name": "nonexistent_xyz_no_such_func"})
+    assert result["risk"] == "LOW"
+    assert result["total_affected"] == 0
+
+
+@pytest.mark.level5
+def test_mcp_safe_to_modify(server) -> None:
+    """safe_to_modify returns risk assessment for a file."""
+    result = server.call_tool("safe_to_modify", {"file_path": "mypkg/core.py"})
+    assert "risk" in result
+    assert "dependent_functions" in result
+    assert "has_tests" in result
+    assert result["risk"] in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+
+
+@pytest.mark.level5
+def test_mcp_what_changed_no_tracker(server) -> None:
+    """what_changed returns inactive when no watch mode."""
+    result = server.call_tool("what_changed", {})
+    assert result["session_active"] is False
+
+
+@pytest.mark.level5
+def test_mcp_suggest_tests_known() -> None:
+    """suggest_tests returns test files for a known function."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    srv = VectorGraphMCPServer(PROJECT_ROOT)
+    # add_node is widely called from test fixtures across the test suite
+    result = srv.call_tool("suggest_tests", {"name": "add_node"})
+    assert "tests" in result
+    assert len(result["tests"]) > 0
+
+
+@pytest.mark.level5
+def test_mcp_suggest_tests_unknown(server) -> None:
+    """suggest_tests returns empty for unknown function."""
+    result = server.call_tool("suggest_tests", {"name": "nonexistent_xyz_no_such_func"})
+    assert result["tests"] == []
+
+
+@pytest.mark.level5
+def test_mcp_dependency_check() -> None:
+    """dependency_check reports existing cycles."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    srv = VectorGraphMCPServer(PROJECT_ROOT)
+    result = srv.call_tool("dependency_check", {"module": "vector_graph.analysis.impact"})
+    assert "existing_cycle_count" in result
+    assert isinstance(result["existing_cycle_count"], int)
+
+
+@pytest.mark.level5
+def test_mcp_list_tools_count_15() -> None:
+    """MCP server now has 15 tools."""
+    from vector_graph.api.mcp_server import VectorGraphMCPServer
+    srv = VectorGraphMCPServer(PROJECT_ROOT)
+    tools = srv.list_tools()
+    assert len(tools) == 15
+
+
+@pytest.mark.level5
+def test_mcp_smart_tools_in_list(server) -> None:
+    """All 5 new smart tools appear in list_tools."""
+    tools = server.list_tools()
+    names = {t["name"] for t in tools}
+    assert "impact_preview" in names
+    assert "safe_to_modify" in names
+    assert "what_changed" in names
+    assert "suggest_tests" in names
+    assert "dependency_check" in names
+
+
+@pytest.mark.level5
+def test_mcp_impact_preview_has_suggestion(server) -> None:
+    """impact_preview result includes a suggestion string."""
+    result = server.call_tool("impact_preview", {"name": "run_engine"})
+    assert "suggestion" in result
+    assert isinstance(result["suggestion"], str)
+
+
+@pytest.mark.level5
+def test_mcp_safe_to_modify_fields(server) -> None:
+    """safe_to_modify returns expected fields."""
+    result = server.call_tool("safe_to_modify", {"file_path": "mypkg/utils.py"})
+    assert "file" in result
+    assert "node_count" in result
+    assert "dependent_files" in result
+    assert "suggestion" in result

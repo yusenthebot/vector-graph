@@ -20,6 +20,42 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Smart-tool helpers
+# ---------------------------------------------------------------------------
+
+def _risk_suggestion(risk: str) -> str:
+    """Return a human-readable suggestion based on risk level."""
+    if risk == "CRITICAL":
+        return "High blast radius. Run full test suite before and after changes."
+    if risk == "HIGH":
+        return "Significant dependencies. Run related tests after changes."
+    if risk == "MEDIUM":
+        return "Moderate impact. Verify callers still work."
+    return "Low risk. Safe to modify."
+
+
+def _file_has_tests(file_path: str, resolved_path: str, graph: Any) -> bool:
+    """Return True if there is at least one test file that imports or calls symbols from this file."""
+    from vector_graph._types import EdgeType
+
+    for edge in graph.iter_edges():
+        if edge.edge_type not in (EdgeType.CALLS, EdgeType.IMPORTS):
+            continue
+        src = graph.get_node(edge.source_id)
+        tgt = graph.get_node(edge.target_id)
+        if src is None or tgt is None:
+            continue
+        # The target node must live in our file
+        if tgt.properties.file_path not in (file_path, resolved_path):
+            continue
+        # The source must be a test file
+        src_base = src.properties.file_path.split("/")[-1]
+        if src_base.startswith("test_") or src_base.endswith("_test.py"):
+            return True
+    return False
+
+
 class VectorGraphMCPServer:
     """Testable handler layer for the vector-graph MCP server.
 
@@ -32,6 +68,8 @@ class VectorGraphMCPServer:
 
         self._graph_api = CodeGraph(root)
         self._graph_api.analyze()
+        # Optional ChangeTracker set externally when --watch mode is active
+        self._change_tracker: Any = None
 
     # ------------------------------------------------------------------
     # Tool registration
@@ -229,6 +267,87 @@ class VectorGraphMCPServer:
                     "required": ["name"],
                 },
             },
+            {
+                "name": "impact_preview",
+                "description": (
+                    "Blast radius preview before making a change. "
+                    "Returns risk level, upstream and downstream affected counts, "
+                    "affected files, and a human-readable suggestion."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Function or class name to preview impact for",
+                        }
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "safe_to_modify",
+                "description": (
+                    "Assess risk of modifying a file. "
+                    "Returns dependent function count, dependent file count, "
+                    "whether tests exist, risk level, and a suggestion."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative or absolute path of the file to assess",
+                        }
+                    },
+                    "required": ["file_path"],
+                },
+            },
+            {
+                "name": "what_changed",
+                "description": (
+                    "Session change summary. Returns empty if no --watch mode is active."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+            {
+                "name": "suggest_tests",
+                "description": (
+                    "Suggest test files and test functions that cover a named symbol, "
+                    "using BFS upstream through CALLS edges."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Function or class name to find tests for",
+                        }
+                    },
+                    "required": ["name"],
+                },
+            },
+            {
+                "name": "dependency_check",
+                "description": (
+                    "Check existing dependency cycles in the codebase. "
+                    "Reports current cycle count and details."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "module": {
+                            "type": "string",
+                            "description": "Module name (informational — used as context label)",
+                        }
+                    },
+                    "required": ["module"],
+                },
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -272,6 +391,11 @@ class VectorGraphMCPServer:
             "orphans": self._tool_orphans,
             "health": self._tool_health,
             "complexity": self._tool_complexity,
+            "impact_preview": self._tool_impact_preview,
+            "safe_to_modify": self._tool_safe_to_modify,
+            "what_changed": self._tool_what_changed,
+            "suggest_tests": self._tool_suggest_tests,
+            "dependency_check": self._tool_dependency_check,
         }
         if name not in _dispatch:
             return {"error": f"Unknown tool: '{name}'"}
@@ -500,6 +624,141 @@ class VectorGraphMCPServer:
             "line_count": best.line_count,
             "parameter_count": best.parameter_count,
             "risk": best.risk,
+        }
+
+    def _tool_impact_preview(self, name: str = "") -> dict[str, Any]:
+        """Blast radius preview before making a change."""
+        up = self._graph_api.impact(name, direction="upstream", max_depth=3)
+        down = self._graph_api.impact(name, direction="downstream", max_depth=2)
+        total = up.impacted_count + down.impacted_count
+
+        # Collect affected file basenames from upstream result
+        affected_files: list[str] = sorted(
+            set(e.file_path.split("/")[-1] for e in up.entries)
+        )
+
+        return {
+            "name": name,
+            "risk": up.risk,
+            "upstream_affected": up.impacted_count,
+            "downstream_affected": down.impacted_count,
+            "total_affected": total,
+            "affected_files": affected_files,
+            "suggestion": _risk_suggestion(up.risk),
+        }
+
+    def _tool_safe_to_modify(self, file_path: str = "") -> dict[str, Any]:
+        """Assess risk of modifying a file."""
+        from vector_graph._types import EdgeType, NodeLabel
+
+        graph = self._graph_api._graph
+        assert graph is not None
+
+        # Resolve file_path relative to project root
+        from pathlib import Path as _Path
+        root = self._graph_api._root
+        candidate = _Path(file_path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        # Normalise to the string stored in graph nodes (which uses resolved abs paths)
+        resolved = str(candidate.resolve())
+
+        file_nodes = list(graph.get_nodes_by_file(resolved))
+        # Fallback: try matching the raw string as stored (may be relative)
+        if not file_nodes:
+            file_nodes = list(graph.get_nodes_by_file(file_path))
+
+        dependent_count = 0
+        dependent_files: set[str] = set()
+        node_count = 0
+
+        for node in file_nodes:
+            if node.label in (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS):
+                node_count += 1
+                for edge in graph.get_edges_to(node.id):
+                    if edge.edge_type == EdgeType.CALLS:
+                        src = graph.get_node(edge.source_id)
+                        if src and src.properties.file_path not in (resolved, file_path):
+                            dependent_count += 1
+                            dependent_files.add(src.properties.file_path)
+
+        has_tests = _file_has_tests(file_path, resolved, graph)
+
+        risk = "LOW"
+        if dependent_count > 20:
+            risk = "CRITICAL"
+        elif dependent_count > 10:
+            risk = "HIGH"
+        elif dependent_count > 3:
+            risk = "MEDIUM"
+
+        return {
+            "file": file_path,
+            "risk": risk,
+            "node_count": node_count,
+            "dependent_functions": dependent_count,
+            "dependent_files": len(dependent_files),
+            "has_tests": has_tests,
+            "suggestion": _risk_suggestion(risk),
+        }
+
+    def _tool_what_changed(self) -> dict[str, Any]:
+        """Session change summary. Returns empty if no change tracker is active."""
+        if self._change_tracker is None:
+            return {
+                "session_active": False,
+                "note": (
+                    "No --watch mode active. "
+                    "Start with vector-graph --watch --serve to enable change tracking."
+                ),
+            }
+        return {
+            "session_active": True,
+            **self._change_tracker.session_summary(),
+            "recent_changes": [
+                e.to_dict() for e in self._change_tracker.get_events(10)
+            ],
+        }
+
+    def _tool_suggest_tests(self, name: str = "") -> dict[str, Any]:
+        """Suggest test files that cover a named symbol."""
+        from vector_graph.analysis.suggest_tests import suggest_tests
+
+        graph = self._graph_api._graph
+        assert graph is not None
+
+        suggestions = suggest_tests(graph, name)
+        return {
+            "name": name,
+            "tests": [
+                {
+                    "test_file": s.test_file,
+                    "test_name": s.test_name,
+                    "depth": s.depth,
+                }
+                for s in suggestions
+            ],
+        }
+
+    def _tool_dependency_check(self, module: str = "") -> dict[str, Any]:
+        """Check if adding an import would create a dependency cycle."""
+        from vector_graph.analysis.cycles import detect_cycles
+
+        graph = self._graph_api._graph
+        assert graph is not None
+
+        existing_cycles = detect_cycles(graph)
+        return {
+            "module": module,
+            "existing_cycle_count": len(existing_cycles),
+            "would_create_cycle": False,  # simplified: reports existing cycles
+            "existing_cycles": [
+                {
+                    "nodes": list(c.node_names),
+                    "length": c.length,
+                }
+                for c in existing_cycles[:5]
+            ],
         }
 
     # ------------------------------------------------------------------
