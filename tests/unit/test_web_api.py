@@ -104,7 +104,8 @@ class TestBuildGraphData:
 
     def test_max_nodes_limit(self, small_graph: KnowledgeGraph) -> None:
         data = build_graph_data(small_graph, max_nodes=1)
-        assert len(data["nodes"]) == 1
+        real_nodes = [n for n in data["nodes"] if not n.get("_isDust") and not n.get("_isLabel")]
+        assert len(real_nodes) == 1
 
     def test_skips_folder_nodes(self) -> None:
         g = KnowledgeGraph()
@@ -287,9 +288,10 @@ class TestBuildGraphDataAdditional:
             properties=NodeProperties(name="MyNode", file_path="/node.py"),
         ))
         data = build_graph_data(g, max_nodes=1)
-        # With max_nodes=1, only the highest priority (ROS2Node) should appear
-        assert len(data["nodes"]) == 1
-        assert data["nodes"][0]["label"] == "ROS2Node"
+        # With max_nodes=1, only the highest priority (ROS2Node) should appear as real node
+        real_nodes = [n for n in data["nodes"] if not n.get("_isDust") and not n.get("_isLabel")]
+        assert len(real_nodes) == 1
+        assert real_nodes[0]["label"] == "ROS2Node"
 
     def test_oserror_on_source_read_skips_source_field(self, tmp_path: Path) -> None:
         """OSError when reading source file is caught; no 'source' field."""

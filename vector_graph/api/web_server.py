@@ -124,6 +124,44 @@ def build_graph_data(
                 "confidence": edge.confidence,
             })
 
+    # ── Inject stardust + group label nodes ──
+    # Group real nodes by their group field
+    group_counts: dict[str, int] = {}
+    for n in nodes:
+        g = n.get("group", "other")
+        group_counts[g] = group_counts.get(g, 0) + 1
+
+    dust_nodes: list[dict[str, Any]] = []
+    for group_name, count in group_counts.items():
+        # Group label node — invisible anchor, carries the name
+        label_id = f"_label_{group_name}"
+        dust_nodes.append({
+            "id": label_id,
+            "name": group_name.split("/")[-1] if "/" in group_name else group_name,
+            "label": "_GroupLabel",
+            "group": group_name,
+            "file": "",
+            "line": 0,
+            "endLine": 0,
+            "_isLabel": True,
+            "_nodeCount": count,
+        })
+        # Stardust particles — tiny decorative nodes
+        n_dust = min(max(count // 2, 8), 40)
+        for i in range(n_dust):
+            dust_nodes.append({
+                "id": f"_dust_{group_name}_{i}",
+                "name": "",
+                "label": "_Dust",
+                "group": group_name,
+                "file": "",
+                "line": 0,
+                "endLine": 0,
+                "_isDust": True,
+            })
+
+    nodes.extend(dust_nodes)
+
     return {"nodes": nodes, "links": links}
 
 
@@ -415,7 +453,6 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   </aside>
 </div>
 
-<script src="https://unpkg.com/three@0.164.1/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1/dist/3d-force-graph.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
@@ -461,8 +498,7 @@ let depthFilter = 0; // 0 = all
 let graph3d = null;
 let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
-let nebulaGroup = null; // THREE.Group holding all nebula meshes
-let nebulaLabels = []; // sprite labels
+// Nebula rendering is data-driven: _Dust and _GroupLabel nodes in graph data
 let healthMode = true; // default ON — show health gradient colors
 
 // ── Data loading ────────────────────────────────────────────
@@ -504,28 +540,50 @@ function initGraph() {
     .showNavInfo(false)
     // Node appearance — dim unconnected when something is selected
     .nodeColor(n => {
+      // Stardust: group-colored, dim
+      if (n._isDust) {
+        const gc = GROUP_COLORS[n.group] || '#585b70';
+        if (selectedId) {
+          const selNode = allNodes.find(x => x.id === selectedId);
+          return (selNode && selNode.group === n.group) ? gc : '#1e1e2e';
+        }
+        return gc;
+      }
+      // Group label: group-colored
+      if (n._isLabel) return GROUP_COLORS[n.group] || '#585b70';
+      // Selected state
       if (selectedId) {
         if (n.id === selectedId) return '#f5e0dc';
         if (highlightNodes.has(n.id)) return COLORS[n.label] || '#cdd6f4';
-        return '#313244'; // dimmed
+        return '#313244';
       }
-      // Health gradient when no node is selected and healthMode is on
+      // Health gradient
       if (healthMode && n.healthRisk) {
         if (n.healthRisk === 'CRITICAL') return '#f38ba8';
         if (n.healthRisk === 'HIGH') return '#fab387';
         if (n.healthRisk === 'MEDIUM') return '#f9e2af';
-        return '#a6e3a1'; // LOW
+        return '#a6e3a1';
       }
       return COLORS[n.label] || '#cdd6f4';
     })
     .nodeRelSize(4)
     .nodeVal(n => {
+      if (n._isDust) return 0.15 + Math.random() * 0.25; // tiny sparkle
+      if (n._isLabel) return 12; // large soft glow for group center
       const base = SIZES[n.label] || 2;
       if (n.complexity) return base + Math.min(n.complexity * 0.5, 8);
       return base;
     })
     .nodeOpacity(0.85)
     .nodeLabel(n => {
+      if (n._isDust) return ''; // no tooltip for dust
+      if (n._isLabel) {
+        const gc = GROUP_COLORS[n.group] || '#888';
+        return '<div style="background:#181825f0;padding:10px 16px;border-radius:8px;font:13px monospace;color:#cdd6f4;border:2px solid ' + gc + ';text-align:center">' +
+          '<b style="color:' + gc + ';font-size:16px">' + n.name + '</b>' +
+          '<br><span style="color:#a6adc8">' + (n._nodeCount||0) + ' nodes</span>' +
+          '<br><span style="color:#585b70;font-size:10px">' + n.group + '</span></div>';
+      }
       const c = COLORS[n.label] || '#cdd6f4';
       let t = '<div style="background:#181825f0;padding:8px 12px;border-radius:6px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:360px;line-height:1.5">';
       t += '<b style="color:' + c + ';font-size:12px">' + n.name + '</b>';
@@ -587,7 +645,7 @@ function initGraph() {
     .linkDirectionalParticleWidth(1.2)
     .linkDirectionalParticleSpeed(0.006)
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
-    .onNodeClick(n => { if (n) selectNode(n.id); })
+    .onNodeClick(n => { if (n && !n._isDust && !n._isLabel) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
     .warmupTicks(120)
     .cooldownTicks(200)
@@ -596,7 +654,7 @@ function initGraph() {
     .d3AlphaMin(0.005)
     .enableNodeDrag(true)
     .enableNavigationControls(true)
-    .onEngineStop(() => { updateNebulae(); });
+
 
   // Seed initial positions by group — spread groups apart before simulation
   _seedGroupPositions(nodes);
@@ -607,15 +665,6 @@ function initGraph() {
   graph3d.d3Force('charge').strength(-15);
   // Weaker link distance so intra-group links pull tight
   graph3d.d3Force('link').distance(20).strength(0.3);
-
-  // Also render nebulae periodically during simulation for visual feedback
-  let _nebulaInterval = setInterval(() => {
-    if (graph3d) updateNebulae();
-  }, 2000);
-  graph3d.onEngineStop(() => {
-    clearInterval(_nebulaInterval);
-    updateNebulae();
-  });
 }
 
 function _seedGroupPositions(nodes) {
@@ -697,7 +746,7 @@ function clusterForce(strength) {
 }
 
 function getFilteredData() {
-  let nodes = allNodes.filter(n => enabledLabels.has(n.label));
+  let nodes = allNodes.filter(n => enabledLabels.has(n.label) || n._isDust || n._isLabel);
   let nodeSet = new Set(nodes.map(n => n.id));
 
   // Depth filter (BFS from selected)
@@ -741,8 +790,6 @@ function refreshGraph() {
   const {nodes, links} = getFilteredData();
   _seedGroupPositions(nodes);
   graph3d.graphData({nodes, links});
-  setTimeout(updateNebulae, 1000);
-  setTimeout(updateNebulae, 3000);
   updateStats();
 }
 
@@ -779,17 +826,7 @@ function selectNode(id) {
     );
   }
   // Nebula highlighting for selected node's group
-  if (nebulaGroup) {
-    const selectedNode = allNodes.find(n => n.id === id);
-    nebulaGroup.children.forEach(child => {
-      if (child.userData && child.userData.isNebula) {
-        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.18 : 0.03;
-      }
-      if (child.userData && child.userData.isLabel) {
-        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 1.0 : 0.4;
-      }
-    });
-  }
+  // Nebula highlight handled by nodeColor callback (data-driven)
   updateDepthButtons();
 }
 
@@ -803,13 +840,7 @@ function deselectNode() {
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
-  // Reset nebula opacity
-  if (nebulaGroup) {
-    nebulaGroup.children.forEach(child => {
-      if (child.userData && child.userData.isNebula) child.material.opacity = 0.09;
-      if (child.userData && child.userData.isLabel) child.material.opacity = 1.0;
-    });
-  }
+  // Nebula reset handled by nodeColor callback (data-driven)
   refreshGraph();
   updateDepthButtons();
 }
@@ -945,164 +976,15 @@ function fetchInspectorDetails(nodeId) {
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// ── Nebula visualization ─────────────────────────────────────
-function updateNebulae() {
-  const scene = graph3d && graph3d.scene ? graph3d.scene() : null;
-  if (!scene) return;
-  if (typeof THREE === 'undefined') return;
-
-  // Remove old nebulae
-  if (nebulaGroup) { scene.remove(nebulaGroup); }
-  nebulaGroup = new THREE.Group();
-  nebulaLabels = [];
-
-  // Compute per-group bounds
-  const groups = {};
-  const gData = graph3d.graphData();
-  gData.nodes.forEach(n => {
-    const g = n.group || 'other';
-    if (!groups[g]) groups[g] = { nodes: [], x: 0, y: 0, z: 0 };
-    groups[g].nodes.push(n);
-    groups[g].x += n.x || 0;
-    groups[g].y += n.y || 0;
-    groups[g].z += n.z || 0;
-  });
-
-  Object.entries(groups).forEach(([name, grp]) => {
-    const count = grp.nodes.length;
-    if (count < 2) return; // skip singletons
-
-    const cx = grp.x / count;
-    const cy = grp.y / count;
-    const cz = grp.z / count;
-
-    // Compute radius (max distance from centroid * 1.3)
-    let maxDist = 0;
-    grp.nodes.forEach(n => {
-      const dx = (n.x||0) - cx, dy = (n.y||0) - cy, dz = (n.z||0) - cz;
-      const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      if (d > maxDist) maxDist = d;
-    });
-    const radius = Math.max(maxDist * 1.3, 20);
-
-    const colorStr = GROUP_COLORS[name] || '#888888';
-    const color = new THREE.Color(colorStr);
-
-    // ── Outer shell: visible boundary ──
-    const shellGeo = new THREE.SphereGeometry(radius, 32, 20);
-    const shellMat = new THREE.MeshBasicMaterial({
-      color: color,
-      transparent: true,
-      opacity: 0.09,
-      depthWrite: false,
-      side: THREE.BackSide,
-    });
-    const shell = new THREE.Mesh(shellGeo, shellMat);
-    shell.position.set(cx, cy, cz);
-    shell.userData = { groupName: name, isNebula: true };
-    nebulaGroup.add(shell);
-
-    // ── Inner glow: brighter core ──
-    const glowGeo = new THREE.SphereGeometry(radius * 0.5, 20, 12);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: color,
-      transparent: true,
-      opacity: 0.06,
-      depthWrite: false,
-    });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    glow.position.set(cx, cy, cz);
-    nebulaGroup.add(glow);
-
-    // ── Stardust particles scattered inside the sphere ──
-    const dustCount = Math.min(Math.floor(count * 1.5), 200);
-    const dustPositions = new Float32Array(dustCount * 3);
-    const dustSizes = new Float32Array(dustCount);
-    for (let i = 0; i < dustCount; i++) {
-      // Random point inside sphere (uniform distribution)
-      let dx, dy, dz;
-      do {
-        dx = (Math.random() - 0.5) * 2;
-        dy = (Math.random() - 0.5) * 2;
-        dz = (Math.random() - 0.5) * 2;
-      } while (dx*dx + dy*dy + dz*dz > 1);
-      dustPositions[i*3]     = cx + dx * radius * 0.9;
-      dustPositions[i*3 + 1] = cy + dy * radius * 0.9;
-      dustPositions[i*3 + 2] = cz + dz * radius * 0.9;
-      dustSizes[i] = 0.5 + Math.random() * 1.5;
-    }
-    const dustGeo = new THREE.BufferGeometry();
-    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-    dustGeo.setAttribute('size', new THREE.BufferAttribute(dustSizes, 1));
-    const dustMat = new THREE.PointsMaterial({
-      color: color,
-      size: 2.0,
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-      sizeAttenuation: true,
-    });
-    const dust = new THREE.Points(dustGeo, dustMat);
-    nebulaGroup.add(dust);
-
-    // ── Wireframe boundary ring ──
-    const wireGeo = new THREE.TorusGeometry(radius, 0.5, 8, 64);
-    const wireMat = new THREE.MeshBasicMaterial({
-      color: color,
-      transparent: true,
-      opacity: 0.2,
-      depthWrite: false,
-    });
-    const wire = new THREE.Mesh(wireGeo, wireMat);
-    wire.position.set(cx, cy, cz);
-    // Random tilt so rings don't all align
-    wire.rotation.x = Math.random() * Math.PI;
-    wire.rotation.y = Math.random() * Math.PI;
-    nebulaGroup.add(wire);
-
-    // ── Large bold label ──
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = 1024;
-    canvas.height = 128;
-    // Background glow
-    const gradient = ctx.createRadialGradient(512, 64, 0, 512, 64, 400);
-    gradient.addColorStop(0, colorStr.replace(')', ',0.15)').replace('hsl', 'hsla'));
-    gradient.addColorStop(1, 'transparent');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 1024, 128);
-    // Text
-    ctx.font = 'bold 48px monospace';
-    ctx.fillStyle = colorStr;
-    ctx.globalAlpha = 0.9;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const shortName = name.split('/').pop() || name;
-    ctx.fillText(shortName, 512, 60);
-    // Node count subtitle
-    ctx.font = '24px monospace';
-    ctx.globalAlpha = 0.5;
-    ctx.fillText(count + ' nodes', 512, 100);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
-    const sprite = new THREE.Sprite(spriteMat);
-    const labelScale = Math.max(radius * 1.0, 30);
-    sprite.position.set(cx, cy + radius + 12, cz);
-    sprite.scale.set(labelScale, labelScale * 0.125, 1);
-    sprite.userData = { groupName: name, isLabel: true };
-    nebulaGroup.add(sprite);
-    nebulaLabels.push({ sprite, name, cx, cy, cz, radius });
-  });
-
-  scene.add(nebulaGroup);
-}
+// Nebula visuals are now data-driven (_Dust + _GroupLabel nodes in graph data)
+// No Three.js overlay needed — the force simulation positions dust particles naturally
 
 // ── Groups sidebar panel ─────────────────────────────────────
 function buildGroupsPanel() {
   const el = document.getElementById('panel-groups');
   const groupCounts = {};
   allNodes.forEach(n => {
+    if (n._isDust || n._isLabel) return; // exclude visual-only nodes
     const g = n.group || 'other';
     groupCounts[g] = (groupCounts[g] || 0) + 1;
   });
@@ -1143,17 +1025,8 @@ function focusGroup(groupName) {
     1500
   );
 
-  // Highlight this nebula, dim others
-  if (nebulaGroup) {
-    nebulaGroup.children.forEach(child => {
-      if (child.userData.isNebula) {
-        child.material.opacity = (child.userData.groupName === groupName) ? 0.15 : 0.02;
-      }
-      if (child.userData.isLabel) {
-        child.material.opacity = (child.userData.groupName === groupName) ? 1.0 : 0.3;
-      }
-    });
-  }
+  // Dim non-focused groups via node color refresh
+  graph3d.nodeColor(graph3d.nodeColor());
 }
 
 // ── Sidebar tabs ────────────────────────────────────────────
@@ -1317,8 +1190,11 @@ function updateDepthButtons() {
 
 function updateStats() {
   const {nodes, links} = getFilteredData();
-  document.getElementById('sidebar-stats').textContent = `${nodes.length} nodes · ${links.length} edges (of ${allNodes.length} total)`;
-  document.getElementById('topbar').innerHTML = `<span>${allNodes.length}</span> nodes &middot; <span>${allLinks.length}</span> edges &middot; <span>${new Set(allNodes.map(n=>n.file)).size}</span> files`;
+  const realNodes = nodes.filter(n => !n._isDust && !n._isLabel);
+  const realAll = allNodes.filter(n => !n._isDust && !n._isLabel);
+  const groupCount = new Set(realAll.map(n => n.group)).size;
+  document.getElementById('sidebar-stats').textContent = `${realNodes.length} nodes · ${links.length} edges · ${groupCount} groups`;
+  document.getElementById('topbar').innerHTML = `<span>${realAll.length}</span> nodes &middot; <span>${allLinks.length}</span> edges &middot; <span>${groupCount}</span> groups`;
 }
 
 // ── Search ──────────────────────────────────────────────────
