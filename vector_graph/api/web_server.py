@@ -521,11 +521,12 @@ function initGraph() {
         if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
         return '#08080e';
       }
-      // 2. Change highlight (persistent until next change or ESC)
+      // 2. Change highlight — soft: changed nodes glow, rest keeps color but dimmed
       if (changeHighlightActive) {
         if (activeChangeIds.has(n.id)) return '#f9e2af'; // bright yellow — directly changed
         if (activeImpactIds.has(n.id)) return '#fab387'; // warm orange — impact chain
-        return '#0a0a12'; // everything else nearly invisible
+        // Everything else keeps its group color but dimmed
+        return (GROUP_COLORS[n.group] || '#45475a') + '55'; // append alpha
       }
       // 3. Cumulative heat (session-level, always shown)
       const heat = cumulativeHeat[n.id] || 0;
@@ -548,11 +549,11 @@ function initGraph() {
     .nodeVal(n => {
       // User selection dimming
       if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
-      // Change highlight sizing
+      // Change highlight sizing — changed nodes larger, rest normal
       if (changeHighlightActive) {
-        if (activeChangeIds.has(n.id)) return 10; // BIG — directly changed
-        if (activeImpactIds.has(n.id)) return 5;  // medium — impact chain
-        return 0.2; // tiny — everything else
+        if (activeChangeIds.has(n.id)) return 8;
+        if (activeImpactIds.has(n.id)) return 5;
+        return SIZES[n.label] || 2; // keep normal size
       }
       const base = SIZES[n.label] || 2;
       if (n.complexity) return base + Math.min(n.complexity * 0.3, 5);
@@ -1559,7 +1560,7 @@ function handleChangeEvent(change) {
   graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
   graph3d.linkDirectionalParticleColor(graph3d.linkDirectionalParticleColor());
 
-  // 7. Nebula: highlight affected group, dim others
+  // 7. Nebula: softly highlight affected group
   if (nebulaGroup) {
     const affectedGroups = new Set();
     gData.nodes.forEach(n => {
@@ -1568,25 +1569,135 @@ function handleChangeEvent(change) {
     nebulaGroup.children.forEach(child => {
       if (!child.userData) return;
       if (child.userData.isNebula) {
-        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 0.18 : 0.02;
+        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 0.15 : 0.05;
       }
       if (child.userData.isLabel) {
-        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 1.0 : 0.2;
+        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 1.0 : 0.5;
       }
     });
   }
+
+  // 8. Open impact tree panel (in inspector area)
+  showImpactPanel(change);
 }
+
+function showImpactPanel(change) {
+  const gData = graph3d ? graph3d.graphData() : {nodes:[]};
+  const story = buildChangeStory(change);
+  const file = (change.file || '').split('/').pop();
+  const risk = change.impact ? change.impact.risk : 'LOW';
+  const riskColor = risk === 'CRITICAL' ? 'var(--red)' : risk === 'HIGH' ? 'var(--peach)' : risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
+  const typeLabel = change.type === 'created' ? 'NEW' : change.type === 'deleted' ? 'DEL' : 'MOD';
+  const typeColor = change.type === 'created' ? 'var(--green)' : change.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
+
+  // Use the inspector panel
+  const panel = document.getElementById('inspector');
+  panel.classList.add('open');
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
+
+  // Header
+  document.getElementById('insp-badge').textContent = typeLabel;
+  document.getElementById('insp-badge').style.cssText = 'background:' + typeColor + '22;color:' + typeColor;
+  document.getElementById('insp-name').textContent = file;
+  document.getElementById('insp-meta').innerHTML = '<span class="risk-badge risk-' + risk + '">' + risk + '</span> <span style="color:var(--overlay0)">risk</span> &middot; <span style="color:var(--text)">' + activeChangeIds.size + ' changed</span> &middot; <span style="color:var(--overlay0)">' + activeImpactIds.size + ' affected</span>';
+
+  // Build tree
+  let html = '';
+  const added = change.nodes_added || [];
+  const modified = change.nodes_modified || [];
+  const removed = change.nodes_removed || [];
+
+  // ── What Changed ──
+  if (added.length + modified.length + removed.length > 0) {
+    html += '<div class="insp-section"><h4>What Changed</h4>';
+    added.forEach(name => {
+      const nd = gData.nodes.find(n => n.name === name && activeChangeIds.has(n.id));
+      html += '<div style="padding:2px 0;font-size:11px">';
+      html += '<span style="color:var(--green);font-weight:bold">+</span> ';
+      if (nd) html += '<span style="cursor:pointer;color:var(--green)" onclick="selectNode(\'' + nd.id + '\')">' + name + '</span>';
+      else html += '<span style="color:var(--green)">' + name + '</span>';
+      html += ' <span style="color:var(--surface2);font-size:9px">added</span></div>';
+    });
+    modified.forEach(name => {
+      const nd = gData.nodes.find(n => n.name === name && activeChangeIds.has(n.id));
+      html += '<div style="padding:2px 0;font-size:11px">';
+      html += '<span style="color:var(--yellow);font-weight:bold">~</span> ';
+      if (nd) html += '<span style="cursor:pointer;color:var(--yellow)" onclick="selectNode(\'' + nd.id + '\')">' + name + '</span>';
+      else html += '<span style="color:var(--yellow)">' + name + '</span>';
+      html += '</div>';
+    });
+    removed.forEach(name => {
+      html += '<div style="padding:2px 0;font-size:11px">';
+      html += '<span style="color:var(--red);font-weight:bold">-</span> ';
+      html += '<span style="color:var(--red)">' + name + '</span>';
+      html += ' <span style="color:var(--surface2);font-size:9px">removed</span></div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Calls (outgoing) ──
+  if (story.outgoing.length > 0) {
+    html += '<div class="insp-section"><h4>Calls (' + story.outgoing.length + ')</h4>';
+    story.outgoing.forEach(dep => {
+      const c = GROUP_COLORS[gData.nodes.find(n=>n.id===dep.id)?.group] || 'var(--blue)';
+      html += '<div class="rel-item" onclick="selectNode(\'' + dep.id + '\')">';
+      html += '<span style="color:var(--blue)">&#8594;</span> ';
+      html += '<span class="fdot" style="background:' + c + '"></span>';
+      html += dep.name;
+      html += ' <span class="rel-type">' + dep.file + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Depended on by (incoming) ──
+  if (story.incoming.length > 0) {
+    html += '<div class="insp-section"><h4>Depended On By (' + story.incoming.length + ')</h4>';
+    story.incoming.forEach(dep => {
+      const c = GROUP_COLORS[gData.nodes.find(n=>n.id===dep.id)?.group] || 'var(--peach)';
+      html += '<div class="rel-item" onclick="selectNode(\'' + dep.id + '\')">';
+      html += '<span style="color:var(--peach)">&#8592;</span> ';
+      html += '<span class="fdot" style="background:' + c + '"></span>';
+      html += dep.name;
+      html += ' <span class="rel-type">' + dep.file + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  // ── Impact Summary ──
+  if (change.impact && change.impact.affected_count > 0) {
+    html += '<div class="insp-section"><h4>Impact</h4>';
+    html += '<div style="font-size:11px;color:' + riskColor + ';margin-bottom:4px">' + change.impact.affected_count + ' nodes in blast radius</div>';
+    html += '<div style="font-size:10px;color:var(--overlay0)">' + story.incoming.length + ' direct dependents</div>';
+    html += '<div style="font-size:10px;color:var(--overlay0)">' + activeImpactIds.size + ' total in impact chain</div>';
+    if (change.impact.affected_groups && change.impact.affected_groups.length > 0) {
+      html += '<div style="font-size:10px;color:var(--overlay0);margin-top:4px">Groups: ';
+      change.impact.affected_groups.forEach(g => {
+        const gc = GROUP_COLORS[g] || '#888';
+        html += '<span style="color:' + gc + '">' + g.split('/').pop() + '</span> ';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  document.getElementById('insp-body').innerHTML = html;
 
 function clearChangeHighlight() {
   changeHighlightActive = false;
   activeChangeIds.clear();
   activeImpactIds.clear();
+  // Close impact panel
+  document.getElementById('inspector').classList.remove('open');
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
   // Re-render with normal colors
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.nodeVal(graph3d.nodeVal());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
   graph3d.linkOpacity(graph3d.linkOpacity());
+  graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
   // Reset nebula
   if (nebulaGroup) {
     nebulaGroup.children.forEach(child => {
