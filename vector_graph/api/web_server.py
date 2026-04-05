@@ -1688,9 +1688,6 @@ function focusChange(changeIndex) {
   if (changeIndex >= changeHistory.length) return;
   // Re-trigger the change event handling (re-focus, re-highlight)
   handleChangeEvent(changeHistory[changeIndex]);
-      return;
-    }
-  }
 }
 
 // ── Start ───────────────────────────────────────────────────
