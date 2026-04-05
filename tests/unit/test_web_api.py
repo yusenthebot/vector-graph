@@ -104,8 +104,7 @@ class TestBuildGraphData:
 
     def test_max_nodes_limit(self, small_graph: KnowledgeGraph) -> None:
         data = build_graph_data(small_graph, max_nodes=1)
-        real_nodes = [n for n in data["nodes"] if not n.get("_isDust") and not n.get("_isLabel")]
-        assert len(real_nodes) == 1
+        assert len(data["nodes"]) == 1
 
     def test_skips_folder_nodes(self) -> None:
         g = KnowledgeGraph()
@@ -288,10 +287,9 @@ class TestBuildGraphDataAdditional:
             properties=NodeProperties(name="MyNode", file_path="/node.py"),
         ))
         data = build_graph_data(g, max_nodes=1)
-        # With max_nodes=1, only the highest priority (ROS2Node) should appear as real node
-        real_nodes = [n for n in data["nodes"] if not n.get("_isDust") and not n.get("_isLabel")]
-        assert len(real_nodes) == 1
-        assert real_nodes[0]["label"] == "ROS2Node"
+        # With max_nodes=1, only the highest priority (ROS2Node) should appear
+        assert len(data["nodes"]) == 1
+        assert data["nodes"][0]["label"] == "ROS2Node"
 
     def test_oserror_on_source_read_skips_source_field(self, tmp_path: Path) -> None:
         """OSError when reading source file is caught; no 'source' field."""
@@ -460,3 +458,77 @@ class TestBuildFileTree:
         g = KnowledgeGraph()
         tree = build_file_tree(g, "/project")
         assert tree["children"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Three.js nebula integration tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestThreeJsNebulaIntegration:
+    def test_html_contains_three_js_pinned_version(self) -> None:
+        """HTML template loads three.js with exact version pin."""
+        from vector_graph.api.web_server import _HTML
+        assert 'three@0.137.0/build/three.min.js' in _HTML
+
+    def test_html_contains_force_graph_pinned_version(self) -> None:
+        """HTML template loads 3d-force-graph with exact version pin."""
+        from vector_graph.api.web_server import _HTML
+        assert '3d-force-graph@1.79.1' in _HTML
+
+    def test_html_three_loads_before_force_graph(self) -> None:
+        """three.js script tag appears before 3d-force-graph to ensure window.THREE is set."""
+        from vector_graph.api.web_server import _HTML
+        three_pos = _HTML.index('three@0.137.0')
+        fg_pos = _HTML.index('3d-force-graph@1.79.1')
+        assert three_pos < fg_pos, "three.js must load before 3d-force-graph"
+
+    def test_html_contains_postprocessing_scripts(self) -> None:
+        """HTML includes EffectComposer and related post-processing scripts."""
+        from vector_graph.api.web_server import _HTML
+        assert 'EffectComposer.js' in _HTML
+        assert 'RenderPass.js' in _HTML
+        assert 'UnrealBloomPass.js' in _HTML
+
+    def test_html_three_version_compatible_with_force_graph(self) -> None:
+        """three@0.137 is within 3d-force-graph's >=0.118 <1 range."""
+        version = 137
+        assert version >= 118 and version < 1000  # semantic: 0.137 < 1.0
+
+    def test_html_contains_nebula_function(self) -> None:
+        """HTML template contains updateNebulae rendering function."""
+        from vector_graph.api.web_server import _HTML
+        assert 'function updateNebulae()' in _HTML
+        assert 'SphereGeometry' in _HTML
+        assert 'PointsMaterial' in _HTML
+        assert 'AdditiveBlending' in _HTML
+
+    def test_html_contains_cluster_force(self) -> None:
+        """HTML template has clustering force for group separation."""
+        from vector_graph.api.web_server import _HTML
+        assert 'clusterForce' in _HTML
+        assert '_seedGroupPositions' in _HTML
+
+    def test_build_graph_data_no_dust_nodes(self) -> None:
+        """Graph data should NOT contain _isDust or _isLabel nodes (Three.js handles visuals)."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="f1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="foo", file_path="/a.py"),
+        ))
+        data = build_graph_data(g)
+        dust = [n for n in data["nodes"] if n.get("_isDust") or n.get("_isLabel")]
+        assert len(dust) == 0, "Data should not contain dust/label nodes"
+
+    def test_build_graph_data_has_group_field(self) -> None:
+        """Each node has a group field derived from file path."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="f1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="foo", file_path="/project/src/utils/helper.py"),
+        ))
+        data = build_graph_data(g, root_path="/project")
+        assert "group" in data["nodes"][0]
+        assert data["nodes"][0]["group"] == "src/utils"

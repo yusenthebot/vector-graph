@@ -124,44 +124,6 @@ def build_graph_data(
                 "confidence": edge.confidence,
             })
 
-    # ── Inject stardust + group label nodes ──
-    # Group real nodes by their group field
-    group_counts: dict[str, int] = {}
-    for n in nodes:
-        g = n.get("group", "other")
-        group_counts[g] = group_counts.get(g, 0) + 1
-
-    dust_nodes: list[dict[str, Any]] = []
-    for group_name, count in group_counts.items():
-        # Group label node — invisible anchor, carries the name
-        label_id = f"_label_{group_name}"
-        dust_nodes.append({
-            "id": label_id,
-            "name": group_name.split("/")[-1] if "/" in group_name else group_name,
-            "label": "_GroupLabel",
-            "group": group_name,
-            "file": "",
-            "line": 0,
-            "endLine": 0,
-            "_isLabel": True,
-            "_nodeCount": count,
-        })
-        # Stardust particles — tiny decorative nodes
-        n_dust = min(max(count // 2, 8), 40)
-        for i in range(n_dust):
-            dust_nodes.append({
-                "id": f"_dust_{group_name}_{i}",
-                "name": "",
-                "label": "_Dust",
-                "group": group_name,
-                "file": "",
-                "line": 0,
-                "endLine": 0,
-                "_isDust": True,
-            })
-
-    nodes.extend(dust_nodes)
-
     return {"nodes": nodes, "links": links}
 
 
@@ -453,6 +415,10 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   </aside>
 </div>
 
+<script src="https://unpkg.com/three@0.137.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1/dist/3d-force-graph.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
@@ -498,7 +464,7 @@ let depthFilter = 0; // 0 = all
 let graph3d = null;
 let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
-// Nebula rendering is data-driven: _Dust and _GroupLabel nodes in graph data
+let nebulaGroup = null;
 let healthMode = true; // default ON — show health gradient colors
 
 // ── Data loading ────────────────────────────────────────────
@@ -540,17 +506,6 @@ function initGraph() {
     .showNavInfo(false)
     // Node appearance — dim unconnected when something is selected
     .nodeColor(n => {
-      // Stardust: group-colored, dim
-      if (n._isDust) {
-        const gc = GROUP_COLORS[n.group] || '#585b70';
-        if (selectedId) {
-          const selNode = allNodes.find(x => x.id === selectedId);
-          return (selNode && selNode.group === n.group) ? gc : '#1e1e2e';
-        }
-        return gc;
-      }
-      // Group label: group-colored
-      if (n._isLabel) return GROUP_COLORS[n.group] || '#585b70';
       // Selected state
       if (selectedId) {
         if (n.id === selectedId) return '#f5e0dc';
@@ -568,22 +523,12 @@ function initGraph() {
     })
     .nodeRelSize(4)
     .nodeVal(n => {
-      if (n._isDust) return 0.15 + Math.random() * 0.25; // tiny sparkle
-      if (n._isLabel) return 12; // large soft glow for group center
       const base = SIZES[n.label] || 2;
       if (n.complexity) return base + Math.min(n.complexity * 0.5, 8);
       return base;
     })
     .nodeOpacity(0.85)
     .nodeLabel(n => {
-      if (n._isDust) return ''; // no tooltip for dust
-      if (n._isLabel) {
-        const gc = GROUP_COLORS[n.group] || '#888';
-        return '<div style="background:#181825f0;padding:10px 16px;border-radius:8px;font:13px monospace;color:#cdd6f4;border:2px solid ' + gc + ';text-align:center">' +
-          '<b style="color:' + gc + ';font-size:16px">' + n.name + '</b>' +
-          '<br><span style="color:#a6adc8">' + (n._nodeCount||0) + ' nodes</span>' +
-          '<br><span style="color:#585b70;font-size:10px">' + n.group + '</span></div>';
-      }
       const c = COLORS[n.label] || '#cdd6f4';
       let t = '<div style="background:#181825f0;padding:8px 12px;border-radius:6px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:360px;line-height:1.5">';
       t += '<b style="color:' + c + ';font-size:12px">' + n.name + '</b>';
@@ -645,7 +590,7 @@ function initGraph() {
     .linkDirectionalParticleWidth(1.2)
     .linkDirectionalParticleSpeed(0.006)
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
-    .onNodeClick(n => { if (n && !n._isDust && !n._isLabel) selectNode(n.id); })
+    .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
     .warmupTicks(120)
     .cooldownTicks(200)
@@ -665,6 +610,13 @@ function initGraph() {
   graph3d.d3Force('charge').strength(-15);
   // Weaker link distance so intra-group links pull tight
   graph3d.d3Force('link').distance(20).strength(0.3);
+
+  // Render nebulae periodically during simulation + on stop
+  let _nebulaTimer = setInterval(() => updateNebulae(), 2000);
+  graph3d.onEngineStop(() => {
+    clearInterval(_nebulaTimer);
+    updateNebulae();
+  });
 }
 
 function _seedGroupPositions(nodes) {
@@ -746,7 +698,7 @@ function clusterForce(strength) {
 }
 
 function getFilteredData() {
-  let nodes = allNodes.filter(n => enabledLabels.has(n.label) || n._isDust || n._isLabel);
+  let nodes = allNodes.filter(n => enabledLabels.has(n.label));
   let nodeSet = new Set(nodes.map(n => n.id));
 
   // Depth filter (BFS from selected)
@@ -826,7 +778,19 @@ function selectNode(id) {
     );
   }
   // Nebula highlighting for selected node's group
-  // Nebula highlight handled by nodeColor callback (data-driven)
+  if (nebulaGroup) {
+    const selNode = allNodes.find(n => n.id === id);
+    nebulaGroup.children.forEach(child => {
+      if (!child.userData) return;
+      const match = selNode && child.userData.groupName === selNode.group;
+      if (child.userData.isNebula) {
+        child.material.opacity = match ? 0.15 : 0.02;
+      }
+      if (child.userData.isLabel) {
+        child.material.opacity = match ? 1.0 : 0.3;
+      }
+    });
+  }
   updateDepthButtons();
 }
 
@@ -840,7 +804,14 @@ function deselectNode() {
   graph3d.nodeColor(graph3d.nodeColor());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
-  // Nebula reset handled by nodeColor callback (data-driven)
+  // Reset nebula opacities
+  if (nebulaGroup) {
+    nebulaGroup.children.forEach(child => {
+      if (!child.userData) return;
+      if (child.userData.isNebula) child.material.opacity = 0.07;
+      if (child.userData.isLabel) child.material.opacity = 1.0;
+    });
+  }
   refreshGraph();
   updateDepthButtons();
 }
@@ -976,15 +947,165 @@ function fetchInspectorDetails(nodeId) {
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// Nebula visuals are now data-driven (_Dust + _GroupLabel nodes in graph data)
-// No Three.js overlay needed — the force simulation positions dust particles naturally
+function updateNebulae() {
+  if (!graph3d || typeof THREE === 'undefined') return;
+  const scene = graph3d.scene();
+  if (!scene) return;
+
+  // Remove old nebulae
+  if (nebulaGroup) scene.remove(nebulaGroup);
+  nebulaGroup = new THREE.Group();
+
+  // Group real nodes by group field
+  const groups = {};
+  graph3d.graphData().nodes.forEach(n => {
+    const g = n.group || 'other';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(n);
+  });
+
+  Object.entries(groups).forEach(([name, nodes]) => {
+    if (nodes.length < 2) return;
+
+    // Centroid
+    let cx = 0, cy = 0, cz = 0;
+    nodes.forEach(n => { cx += n.x||0; cy += n.y||0; cz += n.z||0; });
+    cx /= nodes.length; cy /= nodes.length; cz /= nodes.length;
+
+    // Radius
+    let maxDist = 0;
+    nodes.forEach(n => {
+      const d = Math.sqrt(((n.x||0)-cx)**2 + ((n.y||0)-cy)**2 + ((n.z||0)-cz)**2);
+      if (d > maxDist) maxDist = d;
+    });
+    const radius = Math.max(maxDist * 1.4, 20);
+
+    const color = new THREE.Color(GROUP_COLORS[name] || '#888888');
+
+    // ── 1. Transparent sphere shell ──
+    const shellGeo = new THREE.SphereGeometry(radius, 32, 24);
+    const shellMat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+      side: THREE.BackSide,
+    });
+    const shell = new THREE.Mesh(shellGeo, shellMat);
+    shell.position.set(cx, cy, cz);
+    shell.userData = { groupName: name, isNebula: true };
+    nebulaGroup.add(shell);
+
+    // ── 2. Inner glow sphere ──
+    const glowGeo = new THREE.SphereGeometry(radius * 0.4, 16, 12);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.05,
+      depthWrite: false,
+    });
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.set(cx, cy, cz);
+    nebulaGroup.add(glow);
+
+    // ── 3. Stardust particles ──
+    const dustCount = Math.min(Math.max(nodes.length * 3, 30), 300);
+    const positions = new Float32Array(dustCount * 3);
+    const colors = new Float32Array(dustCount * 3);
+
+    for (let i = 0; i < dustCount; i++) {
+      // Uniform distribution inside sphere
+      let dx, dy, dz;
+      do {
+        dx = (Math.random() - 0.5) * 2;
+        dy = (Math.random() - 0.5) * 2;
+        dz = (Math.random() - 0.5) * 2;
+      } while (dx*dx + dy*dy + dz*dz > 1);
+
+      positions[i*3]     = cx + dx * radius * 0.85;
+      positions[i*3 + 1] = cy + dy * radius * 0.85;
+      positions[i*3 + 2] = cz + dz * radius * 0.85;
+
+      // Slight color variation
+      const brightness = 0.7 + Math.random() * 0.3;
+      colors[i*3]     = color.r * brightness;
+      colors[i*3 + 1] = color.g * brightness;
+      colors[i*3 + 2] = color.b * brightness;
+    }
+
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    dustGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const dustMat = new THREE.PointsMaterial({
+      size: 1.5,
+      transparent: true,
+      opacity: 0.5,
+      vertexColors: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+    nebulaGroup.add(new THREE.Points(dustGeo, dustMat));
+
+    // ── 4. Orbital ring ──
+    const ringGeo = new THREE.TorusGeometry(radius * 0.95, 0.4, 8, 64);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.15,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(cx, cy, cz);
+    ring.rotation.x = Math.random() * Math.PI;
+    ring.rotation.z = Math.random() * Math.PI * 0.5;
+    nebulaGroup.add(ring);
+
+    // ── 5. Group name label (always visible sprite) ──
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 1024;
+    canvas.height = 128;
+
+    // Glow background
+    ctx.shadowColor = GROUP_COLORS[name] || '#888';
+    ctx.shadowBlur = 30;
+    ctx.font = 'bold 52px monospace';
+    ctx.fillStyle = GROUP_COLORS[name] || '#cdd6f4';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const shortName = name.split('/').pop() || name;
+    ctx.fillText(shortName, 512, 50);
+    // Count subtitle
+    ctx.shadowBlur = 0;
+    ctx.font = '28px monospace';
+    ctx.globalAlpha = 0.6;
+    ctx.fillText(nodes.length + ' nodes', 512, 100);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    const scale = Math.max(radius * 1.2, 35);
+    sprite.position.set(cx, cy + radius + 10, cz);
+    sprite.scale.set(scale, scale * 0.125, 1);
+    sprite.userData = { groupName: name, isLabel: true };
+    nebulaGroup.add(sprite);
+  });
+
+  scene.add(nebulaGroup);
+}
 
 // ── Groups sidebar panel ─────────────────────────────────────
 function buildGroupsPanel() {
   const el = document.getElementById('panel-groups');
   const groupCounts = {};
   allNodes.forEach(n => {
-    if (n._isDust || n._isLabel) return; // exclude visual-only nodes
     const g = n.group || 'other';
     groupCounts[g] = (groupCounts[g] || 0) + 1;
   });
@@ -1025,8 +1146,15 @@ function focusGroup(groupName) {
     1500
   );
 
-  // Dim non-focused groups via node color refresh
-  graph3d.nodeColor(graph3d.nodeColor());
+  // Nebula highlight for focused group
+  if (nebulaGroup) {
+    nebulaGroup.children.forEach(child => {
+      if (!child.userData) return;
+      const match = child.userData.groupName === groupName;
+      if (child.userData.isNebula) child.material.opacity = match ? 0.18 : 0.02;
+      if (child.userData.isLabel) child.material.opacity = match ? 1.0 : 0.25;
+    });
+  }
 }
 
 // ── Sidebar tabs ────────────────────────────────────────────
@@ -1190,11 +1318,9 @@ function updateDepthButtons() {
 
 function updateStats() {
   const {nodes, links} = getFilteredData();
-  const realNodes = nodes.filter(n => !n._isDust && !n._isLabel);
-  const realAll = allNodes.filter(n => !n._isDust && !n._isLabel);
-  const groupCount = new Set(realAll.map(n => n.group)).size;
-  document.getElementById('sidebar-stats').textContent = `${realNodes.length} nodes · ${links.length} edges · ${groupCount} groups`;
-  document.getElementById('topbar').innerHTML = `<span>${realAll.length}</span> nodes &middot; <span>${allLinks.length}</span> edges &middot; <span>${groupCount}</span> groups`;
+  const groupCount = new Set(allNodes.map(n => n.group)).size;
+  document.getElementById('sidebar-stats').textContent = `${nodes.length} nodes · ${links.length} edges · ${groupCount} groups`;
+  document.getElementById('topbar').innerHTML = `<span>${allNodes.length}</span> nodes &middot; <span>${allLinks.length}</span> edges &middot; <span>${groupCount}</span> groups`;
 }
 
 // ── Search ──────────────────────────────────────────────────
