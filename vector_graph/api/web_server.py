@@ -469,6 +469,12 @@ let GROUP_COLORS = {}; // populated in loadData after nodes arrive
 let nebulaGroup = null;
 let healthMode = false; // OFF by default — show per-type label colors
 
+// ── Change tracking state (Live Radar) ──
+let activeChangeIds = new Set();    // nodes directly changed (persistent until next change)
+let activeImpactIds = new Set();    // impact chain nodes (depth 1-2 callers)
+let cumulativeHeat = {};            // nodeId -> change count this session
+let changeHighlightActive = false;  // true when showing change overlay
+
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
   const r = await fetch('/api/data');
@@ -509,26 +515,45 @@ function initGraph() {
     .showNavInfo(false)
     // Node appearance — dim unconnected when something is selected
     .nodeColor(n => {
-      // Selected state — strong contrast
+      // 1. User selection (click) — highest priority
       if (selectedId) {
         if (n.id === selectedId) return '#ffffff';
         if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
-        return '#08080e'; // nearly invisible
+        return '#08080e';
       }
-      // Health gradient (opt-in)
+      // 2. Change highlight (persistent until next change or ESC)
+      if (changeHighlightActive) {
+        if (activeChangeIds.has(n.id)) return '#f9e2af'; // bright yellow — directly changed
+        if (activeImpactIds.has(n.id)) return '#fab387'; // warm orange — impact chain
+        return '#0a0a12'; // everything else nearly invisible
+      }
+      // 3. Cumulative heat (session-level, always shown)
+      const heat = cumulativeHeat[n.id] || 0;
+      if (heat > 0) {
+        if (heat >= 4) return '#f38ba8'; // hot red — changed 4+ times
+        if (heat >= 2) return '#fab387'; // warm orange — changed 2-3 times
+        // heat == 1: subtle warm tint — blend with group color
+      }
+      // 4. Health gradient (opt-in toggle)
       if (healthMode && n.healthRisk) {
         if (n.healthRisk === 'CRITICAL') return '#f38ba8';
         if (n.healthRisk === 'HIGH') return '#fab387';
         if (n.healthRisk === 'MEDIUM') return '#f9e2af';
         return '#a6e3a1';
       }
-      // Group color — nodes match their nebula
+      // 5. Default: group color
       return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
     })
     .nodeRelSize(4)
     .nodeVal(n => {
-      // Shrink unselected nodes when something is selected
+      // User selection dimming
       if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
+      // Change highlight sizing
+      if (changeHighlightActive) {
+        if (activeChangeIds.has(n.id)) return 10; // BIG — directly changed
+        if (activeImpactIds.has(n.id)) return 5;  // medium — impact chain
+        return 0.2; // tiny — everything else
+      }
       const base = SIZES[n.label] || 2;
       if (n.complexity) return base + Math.min(n.complexity * 0.3, 5);
       return base;
@@ -558,25 +583,50 @@ function initGraph() {
     })
     // Edge appearance — highlight connected edges
     .linkColor(l => {
-      if (!selectedId) return EDGE_COLORS[l.type] || '#45475a';
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
-      return '#1e1e2e08'; // nearly invisible
+      // User selection
+      if (selectedId) {
+        if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
+        return '#08080e';
+      }
+      // Change highlight — show impact chain edges
+      if (changeHighlightActive) {
+        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
+        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
+        if (srcHit && tgtHit) return '#fab387'; // orange impact chain
+        if (activeChangeIds.has(sid) || activeChangeIds.has(tid)) return '#f9e2af55'; // faint for partial
+        return '#08080e00'; // invisible
+      }
+      return EDGE_COLORS[l.type] || '#45475a';
     })
     .linkOpacity(l => {
-      if (!selectedId) return 0.1;
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === selectedId || tid === selectedId) return 0.9;
-      return 0.0; // completely hidden
+      if (selectedId) {
+        return (sid === selectedId || tid === selectedId) ? 0.9 : 0.0;
+      }
+      if (changeHighlightActive) {
+        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
+        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
+        if (srcHit && tgtHit) return 0.8;
+        return 0.0;
+      }
+      return 0.1;
     })
     .linkWidth(l => {
-      if (!selectedId) return 0.15;
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === selectedId || tid === selectedId) return 2.0;
-      return 0.0;
+      if (selectedId) {
+        return (sid === selectedId || tid === selectedId) ? 2.0 : 0.0;
+      }
+      if (changeHighlightActive) {
+        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
+        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
+        if (srcHit && tgtHit) return 2.5;
+        return 0.0;
+      }
+      return 0.15;
     })
     .linkCurvature(l => {
       if (l.type === 'CALLS') return 0.15;
@@ -602,7 +652,7 @@ function initGraph() {
     .linkDirectionalParticleSpeed(0.006)
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
-    .onBackgroundClick(() => { deselectNode(); })
+    .onBackgroundClick(() => { deselectNode(); clearChangeHighlight(); })
     .warmupTicks(80)
     .cooldownTicks(120)
     .d3AlphaDecay(0.04)
@@ -1360,7 +1410,7 @@ searchInput.addEventListener('input', () => {
 searchInput.addEventListener('blur', () => { setTimeout(() => searchResults.style.display = 'none', 200); });
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); }
-  if (e.key === 'Escape') { deselectNode(); searchResults.style.display = 'none'; searchInput.blur(); }
+  if (e.key === 'Escape') { deselectNode(); clearChangeHighlight(); searchResults.style.display = 'none'; searchInput.blur(); }
 });
 
 document.getElementById('insp-close').addEventListener('click', deselectNode);
@@ -1397,94 +1447,136 @@ function handleChangeEvent(change) {
   if (!graph3d) return;
   const gData = graph3d.graphData();
 
-  // Find affected nodes in the graph
-  const affectedIds = new Set();
+  // Clear user selection — change view takes over
+  if (selectedId) {
+    selectedId = null;
+    highlightNodes.clear();
+    highlightLinks.clear();
+    document.getElementById('inspector').classList.remove('open');
+  }
+
+  // 1. Find directly changed node IDs
   const changedNames = new Set([
     ...(change.nodes_added || []),
     ...(change.nodes_modified || []),
   ]);
+  const changedFile = (change.file || '').split('/').pop();
+
+  activeChangeIds.clear();
+  activeImpactIds.clear();
 
   gData.nodes.forEach(n => {
-    if (n.file && change.file && n.file.endsWith(change.file)) {
-      affectedIds.add(n.id);
-    }
-    if (changedNames.has(n.name)) {
-      affectedIds.add(n.id);
+    if (changedNames.has(n.name) && n.file && n.file.endsWith(changedFile)) {
+      activeChangeIds.add(n.id);
     }
   });
 
-  if (affectedIds.size === 0) return;
-
-  // Pulse animation: temporarily boost size and brightness
-  animatePulse(affectedIds, change);
-
-  // Nebula breath: highlight affected group
-  animateNebulaBreathe(change);
-}
-
-function animatePulse(nodeIds, change) {
-  // Store original accessor functions
-  const origNodeVal = graph3d.nodeVal();
-  const origNodeColor = graph3d.nodeColor();
-
-  // Determine pulse color based on change type/risk
-  const risk = change.impact && change.impact.risk ? change.impact.risk : '';
-  const pulseColor = risk === 'CRITICAL' ? '#f38ba8' :
-                     risk === 'HIGH' ? '#fab387' :
-                     change.type === 'created' ? '#a6e3a1' :
-                     change.type === 'deleted' ? '#f38ba8' : '#f9e2af';
-
-  // Phase 1: bright flash
-  graph3d.nodeColor(n => {
-    if (nodeIds.has(n.id)) return pulseColor;
-    return origNodeColor(n);
-  });
-  graph3d.nodeVal(n => {
-    if (nodeIds.has(n.id)) return (SIZES[n.label] || 2) * 3;
-    return origNodeVal(n);
-  });
-
-  // Phase 2: fade back (after 800ms)
-  setTimeout(() => {
-    graph3d.nodeColor(n => {
-      if (nodeIds.has(n.id)) return pulseColor;
-      return origNodeColor(n);
+  // If no exact name match, match all nodes in the changed file
+  if (activeChangeIds.size === 0) {
+    gData.nodes.forEach(n => {
+      if (n.file && changedFile && n.file.endsWith(changedFile)) {
+        activeChangeIds.add(n.id);
+      }
     });
-    graph3d.nodeVal(n => {
-      if (nodeIds.has(n.id)) return (SIZES[n.label] || 2) * 2;
-      return origNodeVal(n);
-    });
-  }, 800);
-
-  // Phase 3: restore (after 2s)
-  setTimeout(() => {
-    graph3d.nodeColor(origNodeColor);
-    graph3d.nodeVal(origNodeVal);
-  }, 2000);
-}
-
-function animateNebulaBreathe(change) {
-  if (!nebulaGroup) return;
-
-  // Find which groups are affected
-  const affectedGroups = new Set(change.impact ? (change.impact.affected_groups || []) : []);
-  // Also add the file's own group
-  const fileParts = (change.file || '').split('/');
-  if (fileParts.length >= 2) {
-    affectedGroups.add(fileParts.slice(-2).join('/'));
   }
 
-  // Pulse affected nebulae
-  nebulaGroup.children.forEach(child => {
-    if (!child.userData || !child.userData.isNebula) return;
-    const match = affectedGroups.has(child.userData.groupName);
-    if (match) {
-      const origOpacity = child.material.opacity;
-      child.material.opacity = 0.25; // bright flash
-      setTimeout(() => { child.material.opacity = 0.15; }, 500);
-      setTimeout(() => { child.material.opacity = origOpacity; }, 1500);
-    }
+  // 2. Update cumulative heat
+  activeChangeIds.forEach(id => {
+    cumulativeHeat[id] = (cumulativeHeat[id] || 0) + 1;
   });
+
+  // 3. Build impact chain — BFS depth 1-2 upstream through callers
+  let frontier = [...activeChangeIds];
+  let visited = new Set(frontier);
+  for (let depth = 0; depth < 2; depth++) {
+    const next = [];
+    for (const nid of frontier) {
+      (linkIndex.to[nid] || []).forEach(l => {
+        const sid = typeof l.source === 'object' ? l.source.id : l.source;
+        if (!visited.has(sid)) {
+          visited.add(sid);
+          activeImpactIds.add(sid);
+          next.push(sid);
+        }
+      });
+      // Also downstream
+      (linkIndex.from[nid] || []).forEach(l => {
+        const tid = typeof l.target === 'object' ? l.target.id : l.target;
+        if (!visited.has(tid)) {
+          visited.add(tid);
+          activeImpactIds.add(tid);
+          next.push(tid);
+        }
+      });
+    }
+    frontier = next;
+  }
+
+  // 4. Activate change highlight mode
+  changeHighlightActive = true;
+
+  // 5. Camera fly-to centroid of changed nodes
+  if (activeChangeIds.size > 0) {
+    let cx = 0, cy = 0, cz = 0, count = 0;
+    gData.nodes.forEach(n => {
+      if (activeChangeIds.has(n.id)) {
+        cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; count++;
+      }
+    });
+    if (count > 0) {
+      cx /= count; cy /= count; cz /= count;
+      const dist = 60;
+      graph3d.cameraPosition(
+        {x: cx + dist, y: cy + dist * 0.4, z: cz + dist},
+        {x: cx, y: cy, z: cz},
+        1200
+      );
+    }
+  }
+
+  // 6. Trigger full re-render
+  graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.nodeVal(graph3d.nodeVal());
+  graph3d.linkColor(graph3d.linkColor());
+  graph3d.linkWidth(graph3d.linkWidth());
+  graph3d.linkOpacity(graph3d.linkOpacity());
+
+  // 7. Nebula: highlight affected group, dim others
+  if (nebulaGroup) {
+    const affectedGroups = new Set();
+    gData.nodes.forEach(n => {
+      if (activeChangeIds.has(n.id) && n.group) affectedGroups.add(n.group);
+    });
+    nebulaGroup.children.forEach(child => {
+      if (!child.userData) return;
+      if (child.userData.isNebula) {
+        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 0.18 : 0.02;
+      }
+      if (child.userData.isLabel) {
+        child.material.opacity = affectedGroups.has(child.userData.groupName) ? 1.0 : 0.2;
+      }
+    });
+  }
+}
+
+function clearChangeHighlight() {
+  changeHighlightActive = false;
+  activeChangeIds.clear();
+  activeImpactIds.clear();
+  // Re-render with normal colors
+  graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.nodeVal(graph3d.nodeVal());
+  graph3d.linkColor(graph3d.linkColor());
+  graph3d.linkWidth(graph3d.linkWidth());
+  graph3d.linkOpacity(graph3d.linkOpacity());
+  // Reset nebula
+  if (nebulaGroup) {
+    nebulaGroup.children.forEach(child => {
+      if (!child.userData) return;
+      if (child.userData.isNebula) child.material.opacity = 0.07;
+      if (child.userData.isLabel) child.material.opacity = 1.0;
+    });
+  }
 }
 
 // ── Changes sidebar panel ────────────────────────────────────
@@ -1493,72 +1585,105 @@ function updateChangesPanel() {
   if (!el) return;
 
   if (changeHistory.length === 0) {
-    el.innerHTML = '<div style="padding:8px;color:var(--overlay0);font-size:11px">No changes detected yet.<br>Modify a file to see live updates.</div>';
+    el.innerHTML = '<div style="padding:8px;color:var(--overlay0);font-size:11px">No changes detected yet.<br>Modify a file while <b>--watch</b> is active.</div>';
     return;
   }
 
   let html = '';
 
-  // Session summary at top
-  html += '<div style="padding:4px 0 8px;border-bottom:1px solid var(--surface0);margin-bottom:6px">';
-  html += '<span style="font-size:10px;color:var(--overlay0)">SESSION</span> ';
-  html += '<span style="font-size:11px;color:var(--text)">' + changeHistory.length + ' changes</span>';
+  // Session summary bar
+  const totalAdded = changeHistory.reduce((s,c) => s + (c.nodes_added||[]).length, 0);
+  const totalMod = changeHistory.reduce((s,c) => s + (c.nodes_modified||[]).length, 0);
+  const totalDel = changeHistory.reduce((s,c) => s + (c.nodes_removed||[]).length, 0);
+  const highRisk = changeHistory.filter(c => c.impact && (c.impact.risk === 'HIGH' || c.impact.risk === 'CRITICAL')).length;
+
+  html += '<div style="padding:6px 4px 8px;border-bottom:1px solid var(--surface0);margin-bottom:6px">';
+  html += '<div style="font-size:10px;color:var(--overlay0);margin-bottom:4px">SESSION</div>';
+  html += '<div style="display:flex;gap:8px;font-size:11px">';
+  html += '<span style="color:var(--text)">' + changeHistory.length + ' changes</span>';
+  if (totalAdded) html += '<span style="color:var(--green)">+' + totalAdded + '</span>';
+  if (totalMod) html += '<span style="color:var(--yellow)">~' + totalMod + '</span>';
+  if (totalDel) html += '<span style="color:var(--red)">-' + totalDel + '</span>';
+  if (highRisk) html += '<span style="color:var(--red)">' + highRisk + ' risky</span>';
+  html += '</div>';
+  if (changeHighlightActive) {
+    html += '<button onclick="clearChangeHighlight()" style="margin-top:4px;padding:2px 8px;background:var(--surface1);color:var(--text);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Clear highlight (ESC)</button>';
+  }
   html += '</div>';
 
-  // Change entries
+  // Change entries — latest first, expanded
   changeHistory.slice(0, 30).forEach((c, i) => {
     const time = new Date(c.timestamp * 1000).toLocaleTimeString();
     const file = (c.file || '').split('/').pop();
-    const riskColor = c.impact && c.impact.risk === 'CRITICAL' ? 'var(--red)' :
-                      c.impact && c.impact.risk === 'HIGH' ? 'var(--peach)' :
-                      c.impact && c.impact.risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
     const typeIcon = c.type === 'created' ? '+' : c.type === 'deleted' ? '-' : '~';
     const typeColor = c.type === 'created' ? 'var(--green)' : c.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
+    const risk = c.impact ? c.impact.risk : 'LOW';
+    const isLatest = (i === 0);
 
-    html += '<div style="padding:4px 0;border-bottom:1px solid var(--surface0);font-size:10px;cursor:pointer" onclick="highlightChangeNodes(' + i + ')">';
-    html += '<div style="display:flex;align-items:center;gap:4px">';
+    html += '<div style="padding:5px 4px;border-bottom:1px solid var(--surface0);' + (isLatest ? 'background:var(--surface0);border-radius:4px;margin-bottom:2px' : '') + '">';
+
+    // Header row
+    html += '<div style="display:flex;align-items:center;gap:4px;font-size:10px;cursor:pointer" onclick="focusChange(' + i + ')">';
     html += '<span style="color:var(--overlay0)">' + time + '</span>';
-    html += '<span style="color:' + typeColor + ';font-weight:bold">' + typeIcon + '</span>';
-    html += '<span style="color:var(--text)">' + file + '</span>';
-    html += '<span class="risk-badge risk-' + (c.impact ? c.impact.risk : 'LOW') + '" style="margin-left:auto;font-size:8px">' + (c.impact ? c.impact.risk : '') + '</span>';
+    html += '<span style="color:' + typeColor + ';font-weight:bold;font-size:12px">' + typeIcon + '</span>';
+    html += '<span style="color:var(--text);font-weight:' + (isLatest ? 'bold' : 'normal') + '">' + file + '</span>';
+    html += '<span class="risk-badge risk-' + risk + '" style="margin-left:auto;font-size:8px">' + risk + '</span>';
     html += '</div>';
 
-    // Node details
-    const nodes = [
-      ...(c.nodes_added || []).map(n => '<span style="color:var(--green)">+ ' + n + '</span>'),
-      ...(c.nodes_modified || []).map(n => '<span style="color:var(--yellow)">~ ' + n + '</span>'),
-      ...(c.nodes_removed || []).map(n => '<span style="color:var(--red)">- ' + n + '</span>'),
-    ];
-    if (nodes.length > 0) {
-      html += '<div style="padding:2px 0 0 16px;color:var(--subtext);font-size:9px">';
-      html += nodes.slice(0, 5).join(', ');
-      if (nodes.length > 5) html += ' +' + (nodes.length - 5) + ' more';
+    // Node changes — always shown for latest, truncated for others
+    const added = (c.nodes_added || []);
+    const modified = (c.nodes_modified || []);
+    const removed = (c.nodes_removed || []);
+    const showCount = isLatest ? 10 : 3;
+
+    if (added.length + modified.length + removed.length > 0) {
+      html += '<div style="padding:3px 0 0 18px;font-size:9px;line-height:1.6">';
+      added.slice(0, showCount).forEach(n => {
+        html += '<div style="color:var(--green)">+ ' + n + ' <span style="color:var(--surface2)">new</span></div>';
+      });
+      modified.slice(0, showCount).forEach(n => {
+        html += '<div style="color:var(--yellow)">~ ' + n + '</div>';
+      });
+      removed.slice(0, showCount).forEach(n => {
+        html += '<div style="color:var(--red)">- ' + n + ' <span style="color:var(--surface2)">removed</span></div>';
+      });
+      const total = added.length + modified.length + removed.length;
+      if (total > showCount) {
+        html += '<div style="color:var(--surface2)">+' + (total - showCount) + ' more</div>';
+      }
       html += '</div>';
     }
-    if (c.impact && c.impact.affected_count > 0) {
-      html += '<div style="padding:1px 0 0 16px;color:var(--overlay0);font-size:9px">';
-      html += '&#8594; ' + c.impact.affected_count + ' affected';
+
+    // Impact details — shown for latest and risky changes
+    if (c.impact && c.impact.affected_count > 0 && (isLatest || risk === 'HIGH' || risk === 'CRITICAL')) {
+      html += '<div style="padding:3px 0 0 18px;font-size:9px">';
+      html += '<span style="color:var(--peach)">&#9888; ' + c.impact.affected_count + ' nodes affected</span>';
+      if (c.impact.affected_groups && c.impact.affected_groups.length > 0) {
+        html += '<div style="color:var(--overlay0);margin-top:1px">Groups: ' + c.impact.affected_groups.slice(0, 4).join(', ') + '</div>';
+      }
       html += '</div>';
     }
+
+    // Focus button for latest
+    if (isLatest) {
+      html += '<div style="padding:4px 0 0 18px">';
+      html += '<button onclick="focusChange(0)" style="padding:2px 10px;background:var(--blue);color:var(--bg);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Show in graph</button>';
+      html += '</div>';
+    }
+
     html += '</div>';
   });
 
   el.innerHTML = html;
+
+  // Auto-switch to Changes tab on new change
+  switchTab('changes');
 }
 
-function highlightChangeNodes(changeIndex) {
+function focusChange(changeIndex) {
   if (changeIndex >= changeHistory.length) return;
-  const change = changeHistory[changeIndex];
-  const changedNames = new Set([
-    ...(change.nodes_added || []),
-    ...(change.nodes_modified || []),
-  ]);
-
-  // Find first matching node and select it
-  const gData = graph3d.graphData();
-  for (const n of gData.nodes) {
-    if (changedNames.has(n.name)) {
-      selectNode(n.id);
+  // Re-trigger the change event handling (re-focus, re-highlight)
+  handleChangeEvent(changeHistory[changeIndex]);
       return;
     }
   }

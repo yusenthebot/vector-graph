@@ -550,8 +550,11 @@ class TestSSEAndChangesTimeline:
         assert "switchTab('changes')" in _HTML
         assert 'panel-changes' in _HTML
 
-    def test_html_contains_pulse_animation(self) -> None:
-        """HTML template has pulse animation for change events."""
+    def test_html_contains_change_highlight(self) -> None:
+        """HTML template has persistent change highlight system."""
         from vector_graph.api.web_server import _HTML
-        assert 'animatePulse' in _HTML
         assert 'handleChangeEvent' in _HTML
+        assert 'activeChangeIds' in _HTML
+        assert 'activeImpactIds' in _HTML
+        assert 'clearChangeHighlight' in _HTML
+        assert 'focusChange' in _HTML
