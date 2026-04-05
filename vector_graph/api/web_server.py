@@ -526,7 +526,12 @@ function initGraph() {
         if (activeChangeIds.has(n.id)) return '#f9e2af'; // bright yellow — directly changed
         if (activeImpactIds.has(n.id)) return '#fab387'; // warm orange — impact chain
         // Everything else keeps its group color but dimmed
-        return (GROUP_COLORS[n.group] || '#45475a') + '55'; // append alpha
+        // Convert HSL to dimmed version by reducing lightness
+        const gc = GROUP_COLORS[n.group] || '#45475a';
+        if (gc.startsWith('hsl')) {
+          return gc.replace(/\d+%\)$/, '25%)'); // reduce lightness to 25%
+        }
+        return '#1a1a2e';
       }
       // 3. Cumulative heat (session-level, always shown)
       const heat = cumulativeHeat[n.id] || 0;
