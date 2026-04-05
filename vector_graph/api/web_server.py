@@ -463,7 +463,7 @@ let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
 let nebulaGroup = null; // THREE.Group holding all nebula meshes
 let nebulaLabels = []; // sprite labels
-let healthMode = false; // toggle: label colors vs health gradient
+let healthMode = true; // default ON — show health gradient colors
 
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
@@ -534,6 +534,12 @@ function initGraph() {
       if (n.returnType) t += '<br><span style="color:#94e2d5">&#8594; ' + n.returnType + '</span>';
       if (n.params && n.params.length) t += '<br><span style="color:#89dceb">(' + n.params.join(', ') + ')</span>';
       if (n.bases && n.bases.length) t += '<br><span style="color:#cba6f7">extends ' + n.bases.join(', ') + '</span>';
+      // Health metrics
+      if (n.complexity) {
+        const riskColor = n.healthRisk === 'CRITICAL' ? '#f38ba8' : n.healthRisk === 'HIGH' ? '#fab387' : n.healthRisk === 'MEDIUM' ? '#f9e2af' : '#a6e3a1';
+        t += '<br><span style="color:' + riskColor + '">&#9632; cc=' + n.complexity + ' ' + (n.healthRisk||'') + '</span>';
+        if (n.lineCount) t += ' <span style="color:#585b70">' + n.lineCount + ' lines</span>';
+      }
       // Show connections summary (use pre-built index)
       const inCount = linkIndex.to[n.id] ? linkIndex.to[n.id].length : 0;
       const outCount = linkIndex.from[n.id] ? linkIndex.from[n.id].length : 0;
@@ -713,8 +719,11 @@ function selectNode(id) {
   if (nebulaGroup) {
     const selectedNode = allNodes.find(n => n.id === id);
     nebulaGroup.children.forEach(child => {
-      if (child.userData.isNebula) {
-        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.12 : 0.03;
+      if (child.userData && child.userData.isNebula) {
+        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.15 : 0.02;
+      }
+      if (child.userData && child.userData.isLabel) {
+        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 1.0 : 0.3;
       }
     });
   }
@@ -734,7 +743,8 @@ function deselectNode() {
   // Reset nebula opacity
   if (nebulaGroup) {
     nebulaGroup.children.forEach(child => {
-      if (child.userData.isNebula) child.material.opacity = 0.04;
+      if (child.userData && child.userData.isNebula) child.material.opacity = 0.06;
+      if (child.userData && child.userData.isLabel) child.material.opacity = 1.0;
     });
   }
   refreshGraph();
@@ -796,6 +806,16 @@ function showInspectorImmediate(nodeId) {
         html += '<div class="rel-item" onclick="selectNode(\'' + tid + '\')"><span class="fdot" style="background:' + c + '"></span>' + tgt.name + ' <span class="rel-type">' + l.type + '</span></div>';
       }
     });
+    html += '</div>';
+  }
+
+  // Health metrics section
+  if (nd.complexity) {
+    var riskColor = nd.healthRisk === 'CRITICAL' ? 'var(--red)' : nd.healthRisk === 'HIGH' ? 'var(--peach)' : nd.healthRisk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
+    html += '<div class="insp-section"><h4>Health</h4>';
+    html += '<span class="risk-badge risk-' + (nd.healthRisk||'LOW') + '">' + (nd.healthRisk||'LOW') + '</span> ';
+    html += '<span style="color:' + riskColor + '">complexity=' + nd.complexity + '</span>';
+    if (nd.lineCount) html += ' &middot; ' + nd.lineCount + ' lines';
     html += '</div>';
   }
 
@@ -900,55 +920,113 @@ function updateNebulae() {
       const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
       if (d > maxDist) maxDist = d;
     });
-    const radius = Math.max(maxDist * 1.3, 15);
+    const radius = Math.max(maxDist * 1.3, 20);
 
     const colorStr = GROUP_COLORS[name] || '#888888';
     const color = new THREE.Color(colorStr);
 
-    // Transparent sphere shell
-    const geo = new THREE.SphereGeometry(radius, 24, 16);
-    const mat = new THREE.MeshBasicMaterial({
+    // ── Outer shell: visible boundary ──
+    const shellGeo = new THREE.SphereGeometry(radius, 32, 20);
+    const shellMat = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
-      opacity: 0.04,
+      opacity: 0.06,
       depthWrite: false,
-      side: THREE.DoubleSide,
+      side: THREE.BackSide,
     });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(cx, cy, cz);
-    mesh.userData = { groupName: name, isNebula: true };
-    nebulaGroup.add(mesh);
+    const shell = new THREE.Mesh(shellGeo, shellMat);
+    shell.position.set(cx, cy, cz);
+    shell.userData = { groupName: name, isNebula: true };
+    nebulaGroup.add(shell);
 
-    // Wireframe ring (subtle equatorial outline)
-    const ringGeo = new THREE.RingGeometry(radius * 0.98, radius, 48);
-    const ringMat = new THREE.MeshBasicMaterial({
+    // ── Inner glow: brighter core ──
+    const glowGeo = new THREE.SphereGeometry(radius * 0.6, 20, 12);
+    const glowMat = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
-      opacity: 0.08,
-      side: THREE.DoubleSide,
+      opacity: 0.035,
       depthWrite: false,
     });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.position.set(cx, cy, cz);
-    nebulaGroup.add(ring);
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.set(cx, cy, cz);
+    nebulaGroup.add(glow);
 
-    // Sprite label above the shell
+    // ── Stardust particles scattered inside the sphere ──
+    const dustCount = Math.min(Math.floor(count * 1.5), 200);
+    const dustPositions = new Float32Array(dustCount * 3);
+    const dustSizes = new Float32Array(dustCount);
+    for (let i = 0; i < dustCount; i++) {
+      // Random point inside sphere (uniform distribution)
+      let dx, dy, dz;
+      do {
+        dx = (Math.random() - 0.5) * 2;
+        dy = (Math.random() - 0.5) * 2;
+        dz = (Math.random() - 0.5) * 2;
+      } while (dx*dx + dy*dy + dz*dz > 1);
+      dustPositions[i*3]     = cx + dx * radius * 0.9;
+      dustPositions[i*3 + 1] = cy + dy * radius * 0.9;
+      dustPositions[i*3 + 2] = cz + dz * radius * 0.9;
+      dustSizes[i] = 0.5 + Math.random() * 1.5;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+    dustGeo.setAttribute('size', new THREE.BufferAttribute(dustSizes, 1));
+    const dustMat = new THREE.PointsMaterial({
+      color: color,
+      size: 1.2,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    nebulaGroup.add(dust);
+
+    // ── Wireframe boundary ring ──
+    const wireGeo = new THREE.TorusGeometry(radius, 0.3, 8, 64);
+    const wireMat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+    });
+    const wire = new THREE.Mesh(wireGeo, wireMat);
+    wire.position.set(cx, cy, cz);
+    // Random tilt so rings don't all align
+    wire.rotation.x = Math.random() * Math.PI;
+    wire.rotation.y = Math.random() * Math.PI;
+    nebulaGroup.add(wire);
+
+    // ── Large bold label ──
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 512;
-    canvas.height = 64;
-    ctx.font = 'bold 28px monospace';
+    canvas.width = 1024;
+    canvas.height = 128;
+    // Background glow
+    const gradient = ctx.createRadialGradient(512, 64, 0, 512, 64, 400);
+    gradient.addColorStop(0, colorStr.replace(')', ',0.15)').replace('hsl', 'hsla'));
+    gradient.addColorStop(1, 'transparent');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 1024, 128);
+    // Text
+    ctx.font = 'bold 48px monospace';
     ctx.fillStyle = colorStr;
-    ctx.globalAlpha = 0.7;
+    ctx.globalAlpha = 0.9;
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     const shortName = name.split('/').pop() || name;
-    ctx.fillText(shortName, 256, 40);
+    ctx.fillText(shortName, 512, 60);
+    // Node count subtitle
+    ctx.font = '24px monospace';
+    ctx.globalAlpha = 0.5;
+    ctx.fillText(count + ' nodes', 512, 100);
 
     const texture = new THREE.CanvasTexture(canvas);
     const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
     const sprite = new THREE.Sprite(spriteMat);
-    sprite.position.set(cx, cy + radius + 8, cz);
-    sprite.scale.set(radius * 0.8, radius * 0.1, 1);
+    const labelScale = Math.max(radius * 1.0, 30);
+    sprite.position.set(cx, cy + radius + 12, cz);
+    sprite.scale.set(labelScale, labelScale * 0.125, 1);
     sprite.userData = { groupName: name, isLabel: true };
     nebulaGroup.add(sprite);
     nebulaLabels.push({ sprite, name, cx, cy, cz, radius });
@@ -1126,8 +1204,8 @@ function buildFilters() {
   // Health mode toggle
   html += `<div class="filter-group"><h3>Node Color Mode</h3>
     <div class="ftoggle" id="health-toggle" onclick="toggleHealthMode()" style="cursor:pointer">
-      <span class="fdot" style="background:var(--green)"></span>
-      <span id="health-toggle-label">Label colors</span>
+      <span class="fdot" style="background:#f38ba8"></span>
+      <span id="health-toggle-label">Health gradient</span>
       <span class="fcount" style="font-size:9px">click to toggle</span>
     </div>
     <div style="font-size:10px;color:var(--overlay0);margin-top:4px">
