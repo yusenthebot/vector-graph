@@ -1512,7 +1512,11 @@ function handleChangeEvent(change) {
     frontier = next;
   }
 
-  // 4. Activate change highlight mode
+  // 4. Activate change highlight mode — only if we found affected nodes
+  if (activeChangeIds.size === 0) {
+    changeHighlightActive = false;
+    return; // no matching nodes found, skip visualization
+  }
   changeHighlightActive = true;
 
   // 5. Camera fly-to centroid of changed nodes
