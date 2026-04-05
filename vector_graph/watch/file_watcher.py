@@ -45,6 +45,7 @@ from vector_graph.graph.knowledge_graph import KnowledgeGraph
 from vector_graph.graph.resolution import ResolutionContext
 from vector_graph.graph.symbol_table import SymbolTable
 from vector_graph.parse.python_parser import parse_file
+from vector_graph.watch.change_tracker import ChangeTracker
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +268,9 @@ class GraphWatcher:
         self._all_files: set[str] = set()
         self._type_map = None  # TypeMap | None — imported lazily to avoid circular deps
 
+        # ChangeTracker — wired up by from_pipeline() or can be set externally
+        self.change_tracker: ChangeTracker | None = None
+
         self._observer: Observer | None = None
         # Pending events: file_path -> event_type (latest wins within debounce window)
         self._pending: dict[str, str] = {}
@@ -313,6 +317,7 @@ class GraphWatcher:
         watcher._parse_results = dict(parse_results)
         watcher._all_files = set(parse_results.keys())
         watcher._type_map = type_map
+        watcher.change_tracker = ChangeTracker(graph)
         return watcher
 
     # ------------------------------------------------------------------
@@ -380,6 +385,10 @@ class GraphWatcher:
         """Apply a single file event to the graph (called from timer thread)."""
         with self._lock:
             try:
+                # Snapshot BEFORE mutation so ChangeTracker can compute diffs
+                if self.change_tracker is not None:
+                    self.change_tracker.snapshot_file(file_path)
+
                 # Remove stale nodes and symbols for this file
                 self._graph.remove_nodes_by_file(file_path)
                 self._symbol_table.remove_file(file_path)
@@ -400,6 +409,10 @@ class GraphWatcher:
                     # Clean up cache
                     self._parse_results.pop(file_path, None)
                     self._all_files.discard(file_path)
+
+                # Record change AFTER graph has been fully updated
+                if self.change_tracker is not None:
+                    self.change_tracker.record_change(file_path, event_type)
             except Exception:
                 log.exception("Error processing event %s on %s", event_type, file_path)
 
@@ -421,6 +434,10 @@ class GraphWatcher:
         """
         with self._lock:
             try:
+                # Snapshot BEFORE mutation
+                if self.change_tracker is not None:
+                    self.change_tracker.snapshot_file(file_path)
+
                 self._graph.remove_nodes_by_file(file_path)
                 self._symbol_table.remove_file(file_path)
 
@@ -440,6 +457,10 @@ class GraphWatcher:
                 else:
                     self._parse_results.pop(file_path, None)
                     self._all_files.discard(file_path)
+
+                # Record change AFTER graph fully updated
+                if self.change_tracker is not None:
+                    self.change_tracker.record_change(file_path, event_type)
             except Exception:
                 log.exception(
                     "Error processing event %s on %s", event_type, file_path

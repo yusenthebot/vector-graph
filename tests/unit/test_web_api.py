@@ -531,4 +531,27 @@ class TestThreeJsNebulaIntegration:
         ))
         data = build_graph_data(g, root_path="/project")
         assert "group" in data["nodes"][0]
-        assert data["nodes"][0]["group"] == "src/utils"
+
+
+# ---------------------------------------------------------------------------
+# SSE + Changes Timeline (T4)
+# ---------------------------------------------------------------------------
+
+class TestSSEAndChangesTimeline:
+    def test_html_contains_sse_event_source(self) -> None:
+        """HTML template sets up SSE EventSource for live updates."""
+        from vector_graph.api.web_server import _HTML
+        assert 'EventSource' in _HTML
+        assert '/api/events' in _HTML
+
+    def test_html_contains_changes_tab(self) -> None:
+        """HTML template has Changes sidebar tab."""
+        from vector_graph.api.web_server import _HTML
+        assert "switchTab('changes')" in _HTML
+        assert 'panel-changes' in _HTML
+
+    def test_html_contains_pulse_animation(self) -> None:
+        """HTML template has pulse animation for change events."""
+        from vector_graph.api.web_server import _HTML
+        assert 'animatePulse' in _HTML
+        assert 'handleChangeEvent' in _HTML

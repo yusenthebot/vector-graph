@@ -384,3 +384,116 @@ class TestCLIMain:
 
         captured = capsys.readouterr()
         assert len(captured.out) > 0
+
+
+# ---------------------------------------------------------------------------
+# CLI --watch and --tui flag tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestCLIWatchTuiFlags:
+    def test_cli_watch_flag_exists(self) -> None:
+        """argparse accepts --watch without error."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("root", nargs="?", default=".")
+        parser.add_argument("--watch", action="store_true")
+        parser.add_argument("--serve", action="store_true")
+        parser.add_argument("--tui", action="store_true")
+
+        args = parser.parse_args(["--watch"])
+        assert args.watch is True
+
+    def test_cli_tui_flag_exists(self) -> None:
+        """argparse accepts --tui without error."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("root", nargs="?", default=".")
+        parser.add_argument("--watch", action="store_true")
+        parser.add_argument("--serve", action="store_true")
+        parser.add_argument("--tui", action="store_true")
+
+        args = parser.parse_args(["--tui"])
+        assert args.tui is True
+
+    def test_cli_watch_and_serve_flags_coexist(self) -> None:
+        """argparse accepts --watch --serve together without error."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("root", nargs="?", default=".")
+        parser.add_argument("--watch", action="store_true")
+        parser.add_argument("--serve", action="store_true")
+        parser.add_argument("--tui", action="store_true")
+
+        args = parser.parse_args(["--watch", "--serve"])
+        assert args.watch is True
+        assert args.serve is True
+
+    def test_cli_watch_and_tui_flags_coexist(self) -> None:
+        """argparse accepts --watch --tui together without error."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("root", nargs="?", default=".")
+        parser.add_argument("--watch", action="store_true")
+        parser.add_argument("--serve", action="store_true")
+        parser.add_argument("--tui", action="store_true")
+
+        args = parser.parse_args(["--watch", "--tui"])
+        assert args.watch is True
+        assert args.tui is True
+
+    def test_main_parser_accepts_watch(self) -> None:
+        """The real main() parser must accept --watch without SystemExit."""
+        import argparse
+        from unittest.mock import patch
+
+        captured_parser: list[argparse.ArgumentParser] = []
+
+        def capturing_parse(self, args=None, namespace=None):
+            captured_parser.append(self)
+            raise SystemExit(0)
+
+        with patch.object(argparse.ArgumentParser, "parse_args", capturing_parse):
+            try:
+                from vector_graph.api.python_api import main
+                main()
+            except SystemExit:
+                pass
+
+        assert len(captured_parser) > 0
+        action_strings = [
+            s
+            for action in captured_parser[0]._actions
+            for s in action.option_strings
+        ]
+        assert "--watch" in action_strings
+
+    def test_main_parser_accepts_tui(self) -> None:
+        """The real main() parser must accept --tui without SystemExit."""
+        import argparse
+        from unittest.mock import patch
+
+        captured_parser: list[argparse.ArgumentParser] = []
+
+        def capturing_parse(self, args=None, namespace=None):
+            captured_parser.append(self)
+            raise SystemExit(0)
+
+        with patch.object(argparse.ArgumentParser, "parse_args", capturing_parse):
+            try:
+                from vector_graph.api.python_api import main
+                main()
+            except SystemExit:
+                pass
+
+        assert len(captured_parser) > 0
+        action_strings = [
+            s
+            for action in captured_parser[0]._actions
+            for s in action.option_strings
+        ]
+        assert "--tui" in action_strings

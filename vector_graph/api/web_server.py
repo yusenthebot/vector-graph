@@ -387,10 +387,12 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
       <div class="sidebar-tab active" onclick="switchTab('explorer')">Explorer</div>
       <div class="sidebar-tab" onclick="switchTab('groups')">Groups</div>
       <div class="sidebar-tab" onclick="switchTab('filters')">Filters</div>
+      <div class="sidebar-tab" onclick="switchTab('changes')">Changes</div>
     </div>
     <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
     <div id="panel-groups" class="sidebar-panel" style="padding:6px 12px"></div>
     <div id="panel-filters" class="sidebar-panel" style="padding:6px 12px"></div>
+    <div id="panel-changes" class="sidebar-panel" style="padding:6px 8px"></div>
     <div id="sidebar-stats"></div>
   </div>
   <div id="graph-container">
@@ -492,6 +494,7 @@ async function loadData() {
   buildFilters();
   buildExplorer();
   buildGroupsPanel();
+  updateChangesPanel();
   updateStats();
 }
 
@@ -1362,6 +1365,205 @@ document.addEventListener('keydown', e => {
 
 document.getElementById('insp-close').addEventListener('click', deselectNode);
 
+// ── Live Radar: SSE change events ──────────────────────────
+let changeHistory = [];
+const MAX_CHANGE_HISTORY = 100;
+
+function initSSE() {
+  const evtSource = new EventSource('/api/events');
+
+  evtSource.addEventListener('change', function(e) {
+    try {
+      const change = JSON.parse(e.data);
+      changeHistory.unshift(change);
+      if (changeHistory.length > MAX_CHANGE_HISTORY) changeHistory.pop();
+      handleChangeEvent(change);
+      updateChangesPanel();
+    } catch(err) {
+      console.error('SSE parse error:', err);
+    }
+  });
+
+  evtSource.onerror = function() {
+    // Auto-reconnect is built into EventSource
+    console.log('SSE connection lost, reconnecting...');
+  };
+}
+
+// Start SSE after graph loads
+setTimeout(initSSE, 1000);
+
+function handleChangeEvent(change) {
+  if (!graph3d) return;
+  const gData = graph3d.graphData();
+
+  // Find affected nodes in the graph
+  const affectedIds = new Set();
+  const changedNames = new Set([
+    ...(change.nodes_added || []),
+    ...(change.nodes_modified || []),
+  ]);
+
+  gData.nodes.forEach(n => {
+    if (n.file && change.file && n.file.endsWith(change.file)) {
+      affectedIds.add(n.id);
+    }
+    if (changedNames.has(n.name)) {
+      affectedIds.add(n.id);
+    }
+  });
+
+  if (affectedIds.size === 0) return;
+
+  // Pulse animation: temporarily boost size and brightness
+  animatePulse(affectedIds, change);
+
+  // Nebula breath: highlight affected group
+  animateNebulaBreathe(change);
+}
+
+function animatePulse(nodeIds, change) {
+  // Store original accessor functions
+  const origNodeVal = graph3d.nodeVal();
+  const origNodeColor = graph3d.nodeColor();
+
+  // Determine pulse color based on change type/risk
+  const risk = change.impact && change.impact.risk ? change.impact.risk : '';
+  const pulseColor = risk === 'CRITICAL' ? '#f38ba8' :
+                     risk === 'HIGH' ? '#fab387' :
+                     change.type === 'created' ? '#a6e3a1' :
+                     change.type === 'deleted' ? '#f38ba8' : '#f9e2af';
+
+  // Phase 1: bright flash
+  graph3d.nodeColor(n => {
+    if (nodeIds.has(n.id)) return pulseColor;
+    return origNodeColor(n);
+  });
+  graph3d.nodeVal(n => {
+    if (nodeIds.has(n.id)) return (SIZES[n.label] || 2) * 3;
+    return origNodeVal(n);
+  });
+
+  // Phase 2: fade back (after 800ms)
+  setTimeout(() => {
+    graph3d.nodeColor(n => {
+      if (nodeIds.has(n.id)) return pulseColor;
+      return origNodeColor(n);
+    });
+    graph3d.nodeVal(n => {
+      if (nodeIds.has(n.id)) return (SIZES[n.label] || 2) * 2;
+      return origNodeVal(n);
+    });
+  }, 800);
+
+  // Phase 3: restore (after 2s)
+  setTimeout(() => {
+    graph3d.nodeColor(origNodeColor);
+    graph3d.nodeVal(origNodeVal);
+  }, 2000);
+}
+
+function animateNebulaBreathe(change) {
+  if (!nebulaGroup) return;
+
+  // Find which groups are affected
+  const affectedGroups = new Set(change.impact ? (change.impact.affected_groups || []) : []);
+  // Also add the file's own group
+  const fileParts = (change.file || '').split('/');
+  if (fileParts.length >= 2) {
+    affectedGroups.add(fileParts.slice(-2).join('/'));
+  }
+
+  // Pulse affected nebulae
+  nebulaGroup.children.forEach(child => {
+    if (!child.userData || !child.userData.isNebula) return;
+    const match = affectedGroups.has(child.userData.groupName);
+    if (match) {
+      const origOpacity = child.material.opacity;
+      child.material.opacity = 0.25; // bright flash
+      setTimeout(() => { child.material.opacity = 0.15; }, 500);
+      setTimeout(() => { child.material.opacity = origOpacity; }, 1500);
+    }
+  });
+}
+
+// ── Changes sidebar panel ────────────────────────────────────
+function updateChangesPanel() {
+  const el = document.getElementById('panel-changes');
+  if (!el) return;
+
+  if (changeHistory.length === 0) {
+    el.innerHTML = '<div style="padding:8px;color:var(--overlay0);font-size:11px">No changes detected yet.<br>Modify a file to see live updates.</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Session summary at top
+  html += '<div style="padding:4px 0 8px;border-bottom:1px solid var(--surface0);margin-bottom:6px">';
+  html += '<span style="font-size:10px;color:var(--overlay0)">SESSION</span> ';
+  html += '<span style="font-size:11px;color:var(--text)">' + changeHistory.length + ' changes</span>';
+  html += '</div>';
+
+  // Change entries
+  changeHistory.slice(0, 30).forEach((c, i) => {
+    const time = new Date(c.timestamp * 1000).toLocaleTimeString();
+    const file = (c.file || '').split('/').pop();
+    const riskColor = c.impact && c.impact.risk === 'CRITICAL' ? 'var(--red)' :
+                      c.impact && c.impact.risk === 'HIGH' ? 'var(--peach)' :
+                      c.impact && c.impact.risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
+    const typeIcon = c.type === 'created' ? '+' : c.type === 'deleted' ? '-' : '~';
+    const typeColor = c.type === 'created' ? 'var(--green)' : c.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
+
+    html += '<div style="padding:4px 0;border-bottom:1px solid var(--surface0);font-size:10px;cursor:pointer" onclick="highlightChangeNodes(' + i + ')">';
+    html += '<div style="display:flex;align-items:center;gap:4px">';
+    html += '<span style="color:var(--overlay0)">' + time + '</span>';
+    html += '<span style="color:' + typeColor + ';font-weight:bold">' + typeIcon + '</span>';
+    html += '<span style="color:var(--text)">' + file + '</span>';
+    html += '<span class="risk-badge risk-' + (c.impact ? c.impact.risk : 'LOW') + '" style="margin-left:auto;font-size:8px">' + (c.impact ? c.impact.risk : '') + '</span>';
+    html += '</div>';
+
+    // Node details
+    const nodes = [
+      ...(c.nodes_added || []).map(n => '<span style="color:var(--green)">+ ' + n + '</span>'),
+      ...(c.nodes_modified || []).map(n => '<span style="color:var(--yellow)">~ ' + n + '</span>'),
+      ...(c.nodes_removed || []).map(n => '<span style="color:var(--red)">- ' + n + '</span>'),
+    ];
+    if (nodes.length > 0) {
+      html += '<div style="padding:2px 0 0 16px;color:var(--subtext);font-size:9px">';
+      html += nodes.slice(0, 5).join(', ');
+      if (nodes.length > 5) html += ' +' + (nodes.length - 5) + ' more';
+      html += '</div>';
+    }
+    if (c.impact && c.impact.affected_count > 0) {
+      html += '<div style="padding:1px 0 0 16px;color:var(--overlay0);font-size:9px">';
+      html += '&#8594; ' + c.impact.affected_count + ' affected';
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+
+  el.innerHTML = html;
+}
+
+function highlightChangeNodes(changeIndex) {
+  if (changeIndex >= changeHistory.length) return;
+  const change = changeHistory[changeIndex];
+  const changedNames = new Set([
+    ...(change.nodes_added || []),
+    ...(change.nodes_modified || []),
+  ]);
+
+  // Find first matching node and select it
+  const gData = graph3d.graphData();
+  for (const n of gData.nodes) {
+    if (changedNames.has(n.name)) {
+      selectNode(n.id);
+      return;
+    }
+  }
+}
+
 // ── Start ───────────────────────────────────────────────────
 loadData();
 </script>
@@ -1447,8 +1649,25 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 5555,
     max_nodes: int = 600,
+    change_tracker=None,
 ) -> None:
-    """Start local HTTP server with 3D graph visualization."""
+    """Start local HTTP server with 3D graph visualization.
+
+    Parameters
+    ----------
+    graph:
+        Fully-built KnowledgeGraph to visualize.
+    root_path:
+        Project root used for path relativization and source display.
+    host / port:
+        Bind address.
+    max_nodes:
+        Maximum nodes included in the graph JSON payload.
+    change_tracker:
+        Optional ChangeTracker instance.  When provided, the server exposes
+        /api/changes (recent events) and /api/session (summary) and
+        /api/events (SSE stream) that push real-time change notifications.
+    """
     print("Preparing graph data...")
     # Pre-compute health scores for the visualization
     from vector_graph.analysis.complexity import analyze_complexity, build_health_report
@@ -1494,6 +1713,13 @@ def serve(
     html_bytes = _HTML.encode("utf-8")
     root_resolved = os.path.realpath(root_path)
 
+    # SSE broadcaster — wired up when a ChangeTracker is provided
+    from vector_graph.api.sse_server import SSEBroadcaster
+    import queue as _queue
+    broadcaster = SSEBroadcaster()
+    if change_tracker is not None:
+        change_tracker.on_change(lambda evt: broadcaster.push(evt.to_dict(), "change"))
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
@@ -1528,6 +1754,50 @@ def serve(
                 self._json(tree_data)
             elif path == "/api/health":
                 self._respond(200, "application/json", health_report_json)
+            elif path == "/api/events":
+                # Server-Sent Events stream — long-lived connection
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                client_queue = broadcaster.add_client()
+                try:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            msg = client_queue.get(timeout=15)
+                            self.wfile.write(msg.encode())
+                            self.wfile.flush()
+                        except _queue.Empty:
+                            self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    broadcaster.remove_client(client_queue)
+            elif path == "/api/changes":
+                if change_tracker is not None:
+                    limit = int(params.get("limit", "50"))
+                    events = change_tracker.get_events(limit=limit)
+                    self._json({"events": [e.to_dict() for e in events]})
+                else:
+                    self._json({"events": []})
+            elif path == "/api/session":
+                if change_tracker is not None:
+                    self._json(change_tracker.session_summary())
+                else:
+                    self._json({
+                        "event_count": 0,
+                        "files_changed": 0,
+                        "nodes_added": 0,
+                        "nodes_modified": 0,
+                        "nodes_removed": 0,
+                        "high_risk_changes": 0,
+                        "groups_affected": [],
+                    })
             elif path == "/debug":
                 self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:

@@ -227,7 +227,7 @@ def _empty_impact(target_name: str, direction: str) -> ImpactResult:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """CLI entry point: vector-graph <root> [--serve] [--impact NAME] [--orphans]."""
+    """CLI entry point: vector-graph <root> [--serve] [--watch] [--tui] [--impact NAME] ..."""
     parser = argparse.ArgumentParser(
         prog="vector-graph",
         description="Python code knowledge graph analyser",
@@ -236,6 +236,8 @@ def main() -> None:
     parser.add_argument("--serve", action="store_true", help="Start web visualization at localhost")
     parser.add_argument("--port", type=int, default=5555, help="Web server port (default: 5555)")
     parser.add_argument("--max-nodes", type=int, default=2000, help="Max nodes in visualization (default: 2000)")
+    parser.add_argument("--watch", action="store_true", help="Watch for file changes")
+    parser.add_argument("--tui", action="store_true", help="Terminal UI dashboard (requires rich)")
     parser.add_argument("--impact", metavar="NAME", help="Run impact analysis on NAME")
     parser.add_argument(
         "--direction",
@@ -266,12 +268,72 @@ def main() -> None:
         impact = cg.impact(args.impact, direction=args.direction, max_depth=args.depth)
         print_impact(impact)
 
-    if args.serve:
-        from vector_graph.api.web_server import serve
-        serve(cg._graph, root_path=str(cg._root), port=args.port, max_nodes=args.max_nodes)
-
     if args.orphans:
         orphan_nodes = cg.orphans()
         print(f"\nOrphans ({len(orphan_nodes)}):")
         for node in orphan_nodes:
             print(f"  {node.label.value}  {node.properties.name}  ({node.properties.file_path})")
+
+    # --watch mode: start file watcher, optionally serve and/or run TUI
+    if args.watch:
+        import threading
+        import time as _time
+        from vector_graph.watch.file_watcher import GraphWatcher
+        from vector_graph.watch.change_tracker import ChangeTracker
+
+        assert cg._graph is not None
+
+        watcher = GraphWatcher(args.root, cg._graph)
+        tracker = ChangeTracker(cg._graph)
+        watcher.change_tracker = tracker
+        watcher.start()
+
+        try:
+            if args.serve:
+                from vector_graph.api.web_server import serve
+                server_thread = threading.Thread(
+                    target=serve,
+                    args=(cg._graph,),
+                    kwargs={
+                        "root_path": str(cg._root),
+                        "port": args.port,
+                        "max_nodes": args.max_nodes,
+                        "change_tracker": tracker,
+                    },
+                    daemon=True,
+                )
+                server_thread.start()
+                print(f"Web radar at http://127.0.0.1:{args.port}")
+
+            if args.tui:
+                from vector_graph.api.tui import run_tui
+                run_tui(tracker, result)
+            elif not args.serve:
+                # Plain watch mode — print change events to stdout
+                tracker.on_change(
+                    lambda e: print(
+                        f"[{e.change_type}] {e.file_path.split('/')[-1]} "
+                        f"risk={e.risk} affected={e.affected_count}"
+                    )
+                )
+                print("Watching for changes... (Ctrl+C to stop)")
+                try:
+                    while True:
+                        _time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+            else:
+                # --watch --serve: block until interrupted
+                try:
+                    while True:
+                        _time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+        finally:
+            watcher.stop()
+        return
+
+    # --serve without --watch: static web view
+    if args.serve:
+        from vector_graph.api.web_server import serve
+        serve(cg._graph, root_path=str(cg._root), port=args.port, max_nodes=args.max_nodes)
