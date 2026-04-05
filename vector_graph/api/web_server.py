@@ -47,7 +47,10 @@ def _node_group(file_path: str, root_path: str) -> str:
 
 
 def build_graph_data(
-    graph: KnowledgeGraph, max_nodes: int = 600, root_path: str = "",
+    graph: KnowledgeGraph,
+    max_nodes: int = 600,
+    root_path: str = "",
+    health_map: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert KnowledgeGraph to JSON for 3d-force-graph.
 
@@ -85,6 +88,12 @@ def build_graph_data(
             entry["decorators"] = list(node.properties.decorators)
         if node.properties.docstring:
             entry["doc"] = node.properties.docstring[:200]
+        # Health data (optional, from complexity analysis)
+        if health_map and node.id in health_map:
+            h = health_map[node.id]
+            entry["complexity"] = h.cyclomatic
+            entry["healthRisk"] = h.risk
+            entry["lineCount"] = h.line_count
         # Inline source snippet for functions/methods (compact)
         # Files and large classes use lazy /api/source fetch
         if (node.properties.file_path and node.properties.start_line
@@ -454,6 +463,7 @@ let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
 let nebulaGroup = null; // THREE.Group holding all nebula meshes
 let nebulaLabels = []; // sprite labels
+let healthMode = false; // toggle: label colors vs health gradient
 
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
@@ -494,13 +504,26 @@ function initGraph() {
     .showNavInfo(false)
     // Node appearance — dim unconnected when something is selected
     .nodeColor(n => {
-      if (!selectedId) return COLORS[n.label] || '#cdd6f4';
-      if (n.id === selectedId) return '#f5e0dc';
-      if (highlightNodes.has(n.id)) return COLORS[n.label] || '#cdd6f4';
-      return '#313244'; // dimmed
+      if (selectedId) {
+        if (n.id === selectedId) return '#f5e0dc';
+        if (highlightNodes.has(n.id)) return COLORS[n.label] || '#cdd6f4';
+        return '#313244'; // dimmed
+      }
+      // Health gradient when no node is selected and healthMode is on
+      if (healthMode && n.healthRisk) {
+        if (n.healthRisk === 'CRITICAL') return '#f38ba8';
+        if (n.healthRisk === 'HIGH') return '#fab387';
+        if (n.healthRisk === 'MEDIUM') return '#f9e2af';
+        return '#a6e3a1'; // LOW
+      }
+      return COLORS[n.label] || '#cdd6f4';
     })
     .nodeRelSize(4)
-    .nodeVal(n => (SIZES[n.label] || 2))
+    .nodeVal(n => {
+      const base = SIZES[n.label] || 2;
+      if (n.complexity) return base + Math.min(n.complexity * 0.5, 8);
+      return base;
+    })
     .nodeOpacity(0.85)
     .nodeLabel(n => {
       const c = COLORS[n.label] || '#cdd6f4';
@@ -1100,7 +1123,31 @@ function buildFilters() {
     <button class="depth-btn" onclick="setDepth(3)">3</button>
   </div></div>`;
 
+  // Health mode toggle
+  html += `<div class="filter-group"><h3>Node Color Mode</h3>
+    <div class="ftoggle" id="health-toggle" onclick="toggleHealthMode()" style="cursor:pointer">
+      <span class="fdot" style="background:var(--green)"></span>
+      <span id="health-toggle-label">Label colors</span>
+      <span class="fcount" style="font-size:9px">click to toggle</span>
+    </div>
+    <div style="font-size:10px;color:var(--overlay0);margin-top:4px">
+      <span style="color:#a6e3a1">&#9679;</span> LOW &nbsp;
+      <span style="color:#f9e2af">&#9679;</span> MEDIUM &nbsp;
+      <span style="color:#fab387">&#9679;</span> HIGH &nbsp;
+      <span style="color:#f38ba8">&#9679;</span> CRITICAL
+    </div>
+  </div>`;
+
   el.innerHTML = html;
+}
+
+function toggleHealthMode() {
+  healthMode = !healthMode;
+  const label = document.getElementById('health-toggle-label');
+  if (label) label.textContent = healthMode ? 'Health gradient' : 'Label colors';
+  const dot = document.querySelector('#health-toggle .fdot');
+  if (dot) dot.style.background = healthMode ? '#f38ba8' : 'var(--green)';
+  if (graph3d) graph3d.nodeColor(graph3d.nodeColor());
 }
 
 function toggleLabel(label) {
@@ -1252,7 +1299,46 @@ def serve(
 ) -> None:
     """Start local HTTP server with 3D graph visualization."""
     print("Preparing graph data...")
-    data_json = json.dumps(build_graph_data(graph, max_nodes=max_nodes, root_path=root_path)).encode()
+    # Pre-compute health scores for the visualization
+    from vector_graph.analysis.complexity import analyze_complexity, build_health_report
+    complexity_scores = analyze_complexity(graph)
+    cc_map = {s.node_id: s for s in complexity_scores}
+    health_report = build_health_report(graph, root_path=root_path)
+    health_report_json = json.dumps({
+        "total_functions": health_report.total_functions,
+        "avg_complexity": health_report.avg_complexity,
+        "high_risk_count": health_report.high_risk_count,
+        "critical_risk_count": health_report.critical_risk_count,
+        "functions": [
+            {
+                "node_id": f.node_id,
+                "name": f.name,
+                "file_path": f.file_path,
+                "cyclomatic": f.cyclomatic,
+                "line_count": f.line_count,
+                "parameter_count": f.parameter_count,
+                "risk": f.risk,
+            }
+            for f in health_report.functions
+        ],
+        "modules": [
+            {
+                "group": m.group,
+                "node_count": m.node_count,
+                "avg_complexity": m.avg_complexity,
+                "max_complexity": m.max_complexity,
+                "coupling_ratio": m.coupling_ratio,
+                "cohesion": m.cohesion,
+                "god_functions": m.god_functions,
+                "god_classes": m.god_classes,
+                "risk": m.risk,
+            }
+            for m in health_report.modules
+        ],
+    }).encode()
+    data_json = json.dumps(
+        build_graph_data(graph, max_nodes=max_nodes, root_path=root_path, health_map=cc_map)
+    ).encode()
     tree_data = build_file_tree(graph, root_path)
     html_bytes = _HTML.encode("utf-8")
     root_resolved = os.path.realpath(root_path)
@@ -1289,6 +1375,8 @@ def serve(
                 self._json({"results": results})
             elif path == "/api/tree":
                 self._json(tree_data)
+            elif path == "/api/health":
+                self._respond(200, "application/json", health_report_json)
             elif path == "/debug":
                 self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:

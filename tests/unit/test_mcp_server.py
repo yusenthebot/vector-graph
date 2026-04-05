@@ -356,9 +356,9 @@ def test_tool_query_matches_field_is_list(server) -> None:
 
 @pytest.mark.level5
 def test_list_tools_count_is_eight(server) -> None:
-    """Server registers exactly 8 tools (4 original + 4 new)."""
+    """Server registers exactly 10 tools (4 original + 4 new + 2 health)."""
     tools = server.list_tools()
-    assert len(tools) == 8
+    assert len(tools) == 10
 
 
 @pytest.mark.level5
@@ -476,9 +476,9 @@ def server_cyclic(cyclic_project: Path):
 
 @pytest.mark.level5
 def test_mcp_list_tools_count(server) -> None:
-    """list_tools returns exactly 8 tools after adding 4 new ones."""
+    """list_tools returns exactly 10 tools after adding 4 + 2 new ones."""
     tools = server.list_tools()
-    assert len(tools) == 8
+    assert len(tools) == 10
 
 
 @pytest.mark.level5
@@ -607,3 +607,63 @@ def test_mcp_new_tools_have_inputschema(server) -> None:
         assert "inputSchema" in tool, f"tool '{name}' missing inputSchema"
         schema = tool["inputSchema"]
         assert "type" in schema or "properties" in schema, f"tool '{name}' has invalid schema"
+
+
+@pytest.mark.level5
+def test_mcp_tool_health_returns_report(server) -> None:
+    """health tool returns a dict with total_functions and risk counts."""
+    result = server.call_tool("health", {})
+    assert isinstance(result, dict)
+    assert "total_functions" in result
+    assert isinstance(result["total_functions"], int)
+    assert result["total_functions"] > 0
+    assert "avg_complexity" in result
+    assert isinstance(result["avg_complexity"], float)
+    assert "high_risk_count" in result
+    assert "critical_risk_count" in result
+    assert "functions" in result
+    assert isinstance(result["functions"], list)
+    assert "modules" in result
+    assert isinstance(result["modules"], list)
+
+
+@pytest.mark.level5
+def test_mcp_tool_health_functions_have_risk(server) -> None:
+    """Each function entry in health report has a valid risk field."""
+    result = server.call_tool("health", {})
+    for fn in result["functions"]:
+        assert fn["risk"] in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+        assert isinstance(fn["cyclomatic"], int)
+        assert fn["cyclomatic"] >= 1
+
+
+@pytest.mark.level5
+def test_mcp_tool_complexity_known_function(server) -> None:
+    """complexity tool returns score for a known function name."""
+    # 'run_engine' exists in the small project fixture
+    result = server.call_tool("complexity", {"name": "run_engine"})
+    assert isinstance(result, dict)
+    assert result.get("found") is True
+    assert result["name"] == "run_engine"
+    assert "cyclomatic" in result
+    assert isinstance(result["cyclomatic"], int)
+    assert result["cyclomatic"] >= 1
+    assert result["risk"] in ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+
+
+@pytest.mark.level5
+def test_mcp_tool_complexity_unknown_function(server) -> None:
+    """complexity tool returns found=False for unknown function name."""
+    result = server.call_tool("complexity", {"name": "totally_unknown_function_xyz"})
+    assert isinstance(result, dict)
+    assert result.get("found") is False
+    assert result["name"] == "totally_unknown_function_xyz"
+
+
+@pytest.mark.level5
+def test_mcp_health_tools_in_list(server) -> None:
+    """health and complexity tools appear in list_tools."""
+    tools = server.list_tools()
+    names = {t["name"] for t in tools}
+    assert "health" in names
+    assert "complexity" in names

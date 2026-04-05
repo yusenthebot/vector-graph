@@ -200,6 +200,35 @@ class VectorGraphMCPServer:
                     "required": [],
                 },
             },
+            {
+                "name": "health",
+                "description": (
+                    "Compute full codebase health report: cyclomatic complexity, "
+                    "fan-in/out, module coupling/cohesion, god class/function detection, "
+                    "and per-node risk scoring."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+            {
+                "name": "complexity",
+                "description": (
+                    "Return cyclomatic complexity score for a named function or method."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the function or method to analyse",
+                        }
+                    },
+                    "required": ["name"],
+                },
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -241,6 +270,8 @@ class VectorGraphMCPServer:
             "export": self._tool_export,
             "cycles": self._tool_cycles,
             "orphans": self._tool_orphans,
+            "health": self._tool_health,
+            "complexity": self._tool_complexity,
         }
         if name not in _dispatch:
             return {"error": f"Unknown tool: '{name}'"}
@@ -410,6 +441,65 @@ class VectorGraphMCPServer:
                 }
                 for n in orphan_nodes
             ],
+        }
+
+    def _tool_health(self) -> dict[str, Any]:
+        """Compute full codebase health report via CodeGraph.health()."""
+        report = self._graph_api.health()
+        return {
+            "total_functions": report.total_functions,
+            "avg_complexity": report.avg_complexity,
+            "high_risk_count": report.high_risk_count,
+            "critical_risk_count": report.critical_risk_count,
+            "functions": [
+                {
+                    "name": f.name,
+                    "file": f.file_path,
+                    "cyclomatic": f.cyclomatic,
+                    "line_count": f.line_count,
+                    "parameter_count": f.parameter_count,
+                    "risk": f.risk,
+                }
+                for f in report.functions[:50]  # top 50 by complexity
+            ],
+            "modules": [
+                {
+                    "group": m.group,
+                    "node_count": m.node_count,
+                    "avg_complexity": m.avg_complexity,
+                    "max_complexity": m.max_complexity,
+                    "coupling_ratio": m.coupling_ratio,
+                    "cohesion": m.cohesion,
+                    "god_functions": m.god_functions,
+                    "god_classes": m.god_classes,
+                    "risk": m.risk,
+                }
+                for m in report.modules
+            ],
+        }
+
+    def _tool_complexity(self, name: str = "") -> dict[str, Any]:
+        """Return complexity score for a named function or method."""
+        from vector_graph.analysis.complexity import analyze_complexity
+
+        graph = self._graph_api._graph
+        assert graph is not None
+
+        scores = analyze_complexity(graph)
+        matches = [s for s in scores if s.name == name]
+        if not matches:
+            return {"found": False, "name": name}
+
+        # Return the most complex one if there are duplicates
+        best = max(matches, key=lambda s: s.cyclomatic)
+        return {
+            "found": True,
+            "name": best.name,
+            "file": best.file_path,
+            "cyclomatic": best.cyclomatic,
+            "line_count": best.line_count,
+            "parameter_count": best.parameter_count,
+            "risk": best.risk,
         }
 
     # ------------------------------------------------------------------

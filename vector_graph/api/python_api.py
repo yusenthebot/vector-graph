@@ -152,6 +152,25 @@ class CodeGraph:
         assert self._graph is not None
         return execute_query(self._graph, query_type, **kwargs)
 
+    def health(self, root_path: str | None = None) -> "HealthReport":
+        """Compute codebase health metrics.
+
+        Parameters
+        ----------
+        root_path:
+            Project root for grouping nodes by directory. Defaults to self._root.
+
+        Returns
+        -------
+        HealthReport
+            Full report with per-function complexity scores and per-module health.
+        """
+        self._ensure_analyzed()
+        from vector_graph.analysis.complexity import HealthReport, build_health_report
+
+        assert self._graph is not None
+        return build_health_report(self._graph, root_path or str(self._root))
+
     def export(self, format: str = "json") -> str:
         """Export the graph to a string format.
 
