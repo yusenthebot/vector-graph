@@ -1924,6 +1924,29 @@ def serve(
                         "high_risk_changes": 0,
                         "groups_affected": [],
                     })
+            elif path == "/api/quick-check":
+                # Lightweight risk check for hook integration — O(edges) for the file
+                file_param = params.get("file", "")
+                if not file_param:
+                    self._json({"risk": "LOW", "dependents": 0, "nodes": 0})
+                else:
+                    # Resolve file path against root
+                    check_path = os.path.realpath(os.path.join(root_resolved, file_param))
+                    dependents = 0
+                    node_count = 0
+                    for node in graph.iter_nodes():
+                        if node.properties.file_path and os.path.realpath(node.properties.file_path) == check_path:
+                            node_count += 1
+                            for edge in graph.get_edges_to(node.id):
+                                if edge.edge_type in (EdgeType.CALLS, EdgeType.IMPORTS):
+                                    src = graph.get_node(edge.source_id)
+                                    if src and os.path.realpath(src.properties.file_path or "") != check_path:
+                                        dependents += 1
+                    qc_risk = "LOW"
+                    if dependents > 20: qc_risk = "CRITICAL"
+                    elif dependents > 10: qc_risk = "HIGH"
+                    elif dependents > 3: qc_risk = "MEDIUM"
+                    self._json({"risk": qc_risk, "dependents": dependents, "nodes": node_count, "file": file_param})
             elif path == "/debug":
                 self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:
