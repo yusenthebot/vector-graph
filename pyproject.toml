@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 vector-graph = "vector_graph.api.python_api:main"
+vector-graph-mcp = "vector_graph.api.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vector_graph"]
