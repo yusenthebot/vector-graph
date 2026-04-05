@@ -1688,6 +1688,7 @@ function showImpactPanel(change) {
   }
 
   document.getElementById('insp-body').innerHTML = html;
+}
 
 function clearChangeHighlight() {
   changeHighlightActive = false;
