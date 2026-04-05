@@ -465,7 +465,7 @@ let graph3d = null;
 let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
 let nebulaGroup = null;
-let healthMode = true; // default ON — show health gradient colors
+let healthMode = false; // OFF by default — show per-type label colors
 
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
@@ -524,7 +524,7 @@ function initGraph() {
     .nodeRelSize(4)
     .nodeVal(n => {
       const base = SIZES[n.label] || 2;
-      if (n.complexity) return base + Math.min(n.complexity * 0.5, 8);
+      if (n.complexity) return base + Math.min(n.complexity * 0.3, 5);
       return base;
     })
     .nodeOpacity(0.85)
@@ -579,7 +579,12 @@ function initGraph() {
       return 0.1;
     })
     .linkCurveRotation(l => l.type === 'IMPORTS' ? Math.PI * 0.5 : 0)
-    .linkDirectionalArrowLength(3)
+    .linkDirectionalArrowLength(l => {
+      if (!selectedId) return 0; // hide arrows when nothing selected — big perf win
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      return (sid === selectedId || tid === selectedId) ? 3 : 0;
+    })
     .linkDirectionalArrowRelPos(1)
     .linkDirectionalParticles(l => {
       if (!selectedId) return 0; // no particles until selection — big perf win
@@ -592,11 +597,11 @@ function initGraph() {
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    .warmupTicks(120)
-    .cooldownTicks(200)
-    .d3AlphaDecay(0.02)
-    .d3VelocityDecay(0.3)
-    .d3AlphaMin(0.005)
+    .warmupTicks(80)
+    .cooldownTicks(120)
+    .d3AlphaDecay(0.04)
+    .d3VelocityDecay(0.4)
+    .d3AlphaMin(0.01)
     .enableNodeDrag(true)
     .enableNavigationControls(true)
 
@@ -611,12 +616,8 @@ function initGraph() {
   // Weaker link distance so intra-group links pull tight
   graph3d.d3Force('link').distance(20).strength(0.3);
 
-  // Render nebulae periodically during simulation + on stop
-  let _nebulaTimer = setInterval(() => updateNebulae(), 2000);
-  graph3d.onEngineStop(() => {
-    clearInterval(_nebulaTimer);
-    updateNebulae();
-  });
+  // Render nebulae once when simulation stabilizes
+  graph3d.onEngineStop(() => updateNebulae());
 }
 
 function _seedGroupPositions(nodes) {
@@ -628,7 +629,7 @@ function _seedGroupPositions(nodes) {
     groups[g].push(n);
   });
   const groupNames = Object.keys(groups);
-  const spread = 150;
+  const spread = 250; // wider spread for clearer group separation
   groupNames.forEach((g, i) => {
     // Arrange group centers on a sphere using fibonacci sphere
     const phi = Math.acos(1 - 2 * (i + 0.5) / groupNames.length);
@@ -637,9 +638,9 @@ function _seedGroupPositions(nodes) {
     const gy = spread * Math.sin(phi) * Math.sin(theta);
     const gz = spread * Math.cos(phi);
     groups[g].forEach(n => {
-      n.x = gx + (Math.random() - 0.5) * 40;
-      n.y = gy + (Math.random() - 0.5) * 40;
-      n.z = gz + (Math.random() - 0.5) * 40;
+      n.x = gx + (Math.random() - 0.5) * 30;
+      n.y = gy + (Math.random() - 0.5) * 30;
+      n.z = gz + (Math.random() - 0.5) * 30;
     });
   });
 }
@@ -677,7 +678,7 @@ function clusterForce(strength) {
 
     // Push group centroids apart from each other (inter-group repulsion)
     const gNames = Object.keys(centroids);
-    const repel = 800 * alpha;
+    const repel = 2000 * alpha;
     for (let i = 0; i < gNames.length; i++) {
       for (let j = i + 1; j < gNames.length; j++) {
         const a = centroids[gNames[i]], b = centroids[gNames[j]];
@@ -1009,7 +1010,7 @@ function updateNebulae() {
     nebulaGroup.add(glow);
 
     // ── 3. Stardust particles ──
-    const dustCount = Math.min(Math.max(nodes.length * 3, 30), 300);
+    const dustCount = Math.min(Math.max(Math.floor(nodes.length * 0.5), 10), 80);
     const positions = new Float32Array(dustCount * 3);
     const colors = new Float32Array(dustCount * 3);
 
@@ -1268,8 +1269,8 @@ function buildFilters() {
   // Health mode toggle
   html += `<div class="filter-group"><h3>Node Color Mode</h3>
     <div class="ftoggle" id="health-toggle" onclick="toggleHealthMode()" style="cursor:pointer">
-      <span class="fdot" style="background:#f38ba8"></span>
-      <span id="health-toggle-label">Health gradient</span>
+      <span class="fdot" style="background:var(--green)"></span>
+      <span id="health-toggle-label">Label colors</span>
       <span class="fcount" style="font-size:9px">click to toggle</span>
     </div>
     <div style="font-size:10px;color:var(--overlay0);margin-top:4px">
