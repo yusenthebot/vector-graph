@@ -415,7 +415,7 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   </aside>
 </div>
 
-<script src="https://unpkg.com/three@0.170.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.164.1/build/three.min.js"></script>
 <script src="https://unpkg.com/3d-force-graph@1.79.1/dist/3d-force-graph.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
@@ -484,7 +484,7 @@ async function loadData() {
   GROUP_COLORS = {};
   groupNames.forEach((g, i) => {
     const hue = (i * 137.508) % 360;
-    GROUP_COLORS[g] = `hsl(${hue}, 40%, 55%)`;
+    GROUP_COLORS[g] = `hsl(${hue}, 65%, 60%)`;
   });
   initGraph();
   buildFilters();
@@ -589,23 +589,64 @@ function initGraph() {
     .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); })
-    .warmupTicks(30)
-    .cooldownTicks(0)
-    .d3AlphaDecay(0.08)
-    .d3VelocityDecay(0.4)
-    .d3AlphaMin(0.01)
+    .warmupTicks(120)
+    .cooldownTicks(200)
+    .d3AlphaDecay(0.02)
+    .d3VelocityDecay(0.3)
+    .d3AlphaMin(0.005)
     .enableNodeDrag(true)
     .enableNavigationControls(true)
     .onEngineStop(() => { updateNebulae(); });
 
-  // Inject clustering force to pull nodes toward group centroids
-  graph3d.d3Force('cluster', clusterForce(0.15));
-  graph3d.d3Force('charge').strength(-30);
+  // Seed initial positions by group — spread groups apart before simulation
+  _seedGroupPositions(nodes);
+
+  // Inject clustering force — strong enough to overcome link/charge forces
+  graph3d.d3Force('cluster', clusterForce(0.6));
+  // Weaker charge so groups stay compact, stronger inter-group repulsion handled by cluster
+  graph3d.d3Force('charge').strength(-15);
+  // Weaker link distance so intra-group links pull tight
+  graph3d.d3Force('link').distance(20).strength(0.3);
+
+  // Also render nebulae periodically during simulation for visual feedback
+  let _nebulaInterval = setInterval(() => {
+    if (graph3d) updateNebulae();
+  }, 2000);
+  graph3d.onEngineStop(() => {
+    clearInterval(_nebulaInterval);
+    updateNebulae();
+  });
+}
+
+function _seedGroupPositions(nodes) {
+  // Assign initial positions to separate groups spatially
+  const groups = {};
+  nodes.forEach(n => {
+    const g = n.group || 'other';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(n);
+  });
+  const groupNames = Object.keys(groups);
+  const spread = 150;
+  groupNames.forEach((g, i) => {
+    // Arrange group centers on a sphere using fibonacci sphere
+    const phi = Math.acos(1 - 2 * (i + 0.5) / groupNames.length);
+    const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+    const gx = spread * Math.sin(phi) * Math.cos(theta);
+    const gy = spread * Math.sin(phi) * Math.sin(theta);
+    const gz = spread * Math.cos(phi);
+    groups[g].forEach(n => {
+      n.x = gx + (Math.random() - 0.5) * 40;
+      n.y = gy + (Math.random() - 0.5) * 40;
+      n.z = gz + (Math.random() - 0.5) * 40;
+    });
+  });
 }
 
 function clusterForce(strength) {
   let nodes;
   function force(alpha) {
+    // Compute group centroids
     const centroids = {};
     const counts = {};
     nodes.forEach(n => {
@@ -621,6 +662,8 @@ function clusterForce(strength) {
       centroids[g].y /= counts[g];
       centroids[g].z /= counts[g];
     });
+
+    // Pull nodes toward their own group centroid
     const k = strength * alpha;
     nodes.forEach(n => {
       const c = centroids[n.group || 'other'];
@@ -630,6 +673,24 @@ function clusterForce(strength) {
         n.vz += (c.z - n.z) * k;
       }
     });
+
+    // Push group centroids apart from each other (inter-group repulsion)
+    const gNames = Object.keys(centroids);
+    const repel = 800 * alpha;
+    for (let i = 0; i < gNames.length; i++) {
+      for (let j = i + 1; j < gNames.length; j++) {
+        const a = centroids[gNames[i]], b = centroids[gNames[j]];
+        const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        const dist2 = dx*dx + dy*dy + dz*dz + 1;
+        const f = repel / dist2;
+        // Apply to all nodes in each group
+        const cntA = counts[gNames[i]], cntB = counts[gNames[j]];
+        nodes.forEach(n => {
+          if (n.group === gNames[i]) { n.vx += dx * f / cntA; n.vy += dy * f / cntA; n.vz += dz * f / cntA; }
+          if (n.group === gNames[j]) { n.vx -= dx * f / cntB; n.vy -= dy * f / cntB; n.vz -= dz * f / cntB; }
+        });
+      }
+    }
   }
   force.initialize = (_nodes) => { nodes = _nodes; };
   return force;
@@ -678,8 +739,10 @@ function bfsFromNode(startId, maxDepth) {
 function refreshGraph() {
   if (!graph3d) return;
   const {nodes, links} = getFilteredData();
+  _seedGroupPositions(nodes);
   graph3d.graphData({nodes, links});
-  setTimeout(updateNebulae, 500);
+  setTimeout(updateNebulae, 1000);
+  setTimeout(updateNebulae, 3000);
   updateStats();
 }
 
@@ -720,10 +783,10 @@ function selectNode(id) {
     const selectedNode = allNodes.find(n => n.id === id);
     nebulaGroup.children.forEach(child => {
       if (child.userData && child.userData.isNebula) {
-        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.15 : 0.02;
+        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 0.18 : 0.03;
       }
       if (child.userData && child.userData.isLabel) {
-        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 1.0 : 0.3;
+        child.material.opacity = (selectedNode && child.userData.groupName === selectedNode.group) ? 1.0 : 0.4;
       }
     });
   }
@@ -743,7 +806,7 @@ function deselectNode() {
   // Reset nebula opacity
   if (nebulaGroup) {
     nebulaGroup.children.forEach(child => {
-      if (child.userData && child.userData.isNebula) child.material.opacity = 0.06;
+      if (child.userData && child.userData.isNebula) child.material.opacity = 0.09;
       if (child.userData && child.userData.isLabel) child.material.opacity = 1.0;
     });
   }
@@ -930,7 +993,7 @@ function updateNebulae() {
     const shellMat = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
-      opacity: 0.06,
+      opacity: 0.09,
       depthWrite: false,
       side: THREE.BackSide,
     });
@@ -940,11 +1003,11 @@ function updateNebulae() {
     nebulaGroup.add(shell);
 
     // ── Inner glow: brighter core ──
-    const glowGeo = new THREE.SphereGeometry(radius * 0.6, 20, 12);
+    const glowGeo = new THREE.SphereGeometry(radius * 0.5, 20, 12);
     const glowMat = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
-      opacity: 0.035,
+      opacity: 0.06,
       depthWrite: false,
     });
     const glow = new THREE.Mesh(glowGeo, glowMat);
@@ -973,9 +1036,9 @@ function updateNebulae() {
     dustGeo.setAttribute('size', new THREE.BufferAttribute(dustSizes, 1));
     const dustMat = new THREE.PointsMaterial({
       color: color,
-      size: 1.2,
+      size: 2.0,
       transparent: true,
-      opacity: 0.25,
+      opacity: 0.4,
       depthWrite: false,
       sizeAttenuation: true,
     });
@@ -983,11 +1046,11 @@ function updateNebulae() {
     nebulaGroup.add(dust);
 
     // ── Wireframe boundary ring ──
-    const wireGeo = new THREE.TorusGeometry(radius, 0.3, 8, 64);
+    const wireGeo = new THREE.TorusGeometry(radius, 0.5, 8, 64);
     const wireMat = new THREE.MeshBasicMaterial({
       color: color,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.2,
       depthWrite: false,
     });
     const wire = new THREE.Mesh(wireGeo, wireMat);
