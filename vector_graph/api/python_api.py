@@ -257,7 +257,12 @@ def main() -> None:
 
     from vector_graph.api.visualize import print_summary, print_impact
 
-    cg = CodeGraph(args.root)
+    root_path = Path(args.root).expanduser().resolve()
+    if not root_path.is_dir():
+        print(f"Error: '{args.root}' is not a valid directory", file=sys.stderr)
+        sys.exit(1)
+
+    cg = CodeGraph(root_path)
     result = cg.analyze()
     print_summary(result)
 
@@ -283,7 +288,7 @@ def main() -> None:
 
         assert cg._graph is not None
 
-        watcher = GraphWatcher(args.root, cg._graph)
+        watcher = GraphWatcher(cg._root, cg._graph)
         tracker = ChangeTracker(cg._graph)
         watcher.change_tracker = tracker
         watcher.start()
