@@ -643,14 +643,26 @@ function initGraph() {
     })
     .linkDirectionalArrowRelPos(1)
     .linkDirectionalParticles(l => {
-      if (!selectedId) return 0; // no particles until selection — big perf win
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      return (sid === selectedId || tid === selectedId) ? 2 : 0;
+      // Change highlight: particles flow along impact chain
+      if (changeHighlightActive) {
+        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
+        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
+        return (srcHit && tgtHit) ? 3 : 0;
+      }
+      // User selection
+      if (selectedId) {
+        return (sid === selectedId || tid === selectedId) ? 2 : 0;
+      }
+      return 0;
     })
-    .linkDirectionalParticleWidth(1.2)
-    .linkDirectionalParticleSpeed(0.006)
-    .linkDirectionalParticleColor(l => EDGE_COLORS[l.type] || '#89b4fa')
+    .linkDirectionalParticleWidth(1.5)
+    .linkDirectionalParticleSpeed(0.008)
+    .linkDirectionalParticleColor(l => {
+      if (changeHighlightActive) return '#f9e2af'; // warm yellow particles for changes
+      return EDGE_COLORS[l.type] || '#89b4fa';
+    })
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onBackgroundClick(() => { deselectNode(); clearChangeHighlight(); })
     .warmupTicks(80)
@@ -1544,6 +1556,8 @@ function handleChangeEvent(change) {
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
   graph3d.linkOpacity(graph3d.linkOpacity());
+  graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
+  graph3d.linkDirectionalParticleColor(graph3d.linkDirectionalParticleColor());
 
   // 7. Nebula: highlight affected group, dim others
   if (nebulaGroup) {
@@ -1584,6 +1598,39 @@ function clearChangeHighlight() {
 }
 
 // ── Changes sidebar panel ────────────────────────────────────
+
+function buildChangeStory(change) {
+  // Compute outgoing calls and incoming dependents for changed nodes
+  const gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
+  const changedNodes = gData.nodes.filter(n => activeChangeIds.has(n.id));
+
+  const outgoing = []; // what changed nodes call
+  const incoming = []; // what calls changed nodes
+  const seenOut = new Set();
+  const seenIn = new Set();
+
+  changedNodes.forEach(n => {
+    (linkIndex.from[n.id] || []).forEach(l => {
+      if (l.type !== 'CALLS') return;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (seenOut.has(tid) || activeChangeIds.has(tid)) return;
+      seenOut.add(tid);
+      const tgt = gData.nodes.find(x => x.id === tid);
+      if (tgt) outgoing.push({name: tgt.name, file: (tgt.file||'').split('/').pop(), id: tid, label: tgt.label});
+    });
+    (linkIndex.to[n.id] || []).forEach(l => {
+      if (l.type !== 'CALLS') return;
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      if (seenIn.has(sid) || activeChangeIds.has(sid)) return;
+      seenIn.add(sid);
+      const src = gData.nodes.find(x => x.id === sid);
+      if (src) incoming.push({name: src.name, file: (src.file||'').split('/').pop(), id: sid, label: src.label});
+    });
+  });
+
+  return {changedNodes, outgoing, incoming};
+}
+
 function updateChangesPanel() {
   const el = document.getElementById('panel-changes');
   if (!el) return;
@@ -1595,92 +1642,131 @@ function updateChangesPanel() {
 
   let html = '';
 
-  // Session summary bar
+  // ── Session summary bar ──
   const totalAdded = changeHistory.reduce((s,c) => s + (c.nodes_added||[]).length, 0);
   const totalMod = changeHistory.reduce((s,c) => s + (c.nodes_modified||[]).length, 0);
   const totalDel = changeHistory.reduce((s,c) => s + (c.nodes_removed||[]).length, 0);
   const highRisk = changeHistory.filter(c => c.impact && (c.impact.risk === 'HIGH' || c.impact.risk === 'CRITICAL')).length;
 
   html += '<div style="padding:6px 4px 8px;border-bottom:1px solid var(--surface0);margin-bottom:6px">';
-  html += '<div style="font-size:10px;color:var(--overlay0);margin-bottom:4px">SESSION</div>';
-  html += '<div style="display:flex;gap:8px;font-size:11px">';
-  html += '<span style="color:var(--text)">' + changeHistory.length + ' changes</span>';
-  if (totalAdded) html += '<span style="color:var(--green)">+' + totalAdded + '</span>';
-  if (totalMod) html += '<span style="color:var(--yellow)">~' + totalMod + '</span>';
-  if (totalDel) html += '<span style="color:var(--red)">-' + totalDel + '</span>';
-  if (highRisk) html += '<span style="color:var(--red)">' + highRisk + ' risky</span>';
+  html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
+  html += '<span style="font-size:10px;color:var(--overlay0)">SESSION</span>';
+  html += '<span style="font-size:11px;color:var(--text)">' + changeHistory.length + ' changes</span>';
+  if (totalAdded) html += '<span style="color:var(--green);font-size:10px">+' + totalAdded + '</span>';
+  if (totalMod) html += '<span style="color:var(--yellow);font-size:10px">~' + totalMod + '</span>';
+  if (totalDel) html += '<span style="color:var(--red);font-size:10px">-' + totalDel + '</span>';
   html += '</div>';
+  if (highRisk) html += '<div style="color:var(--red);font-size:10px;margin-bottom:4px">&#9888; ' + highRisk + ' high-risk changes</div>';
   if (changeHighlightActive) {
-    html += '<button onclick="clearChangeHighlight()" style="margin-top:4px;padding:2px 8px;background:var(--surface1);color:var(--text);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Clear highlight (ESC)</button>';
+    html += '<button onclick="clearChangeHighlight()" style="padding:2px 8px;background:var(--surface1);color:var(--text);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Clear highlight (ESC)</button>';
   }
   html += '</div>';
 
-  // Change entries — latest first, expanded
-  changeHistory.slice(0, 30).forEach((c, i) => {
-    const time = new Date(c.timestamp * 1000).toLocaleTimeString();
-    const file = (c.file || '').split('/').pop();
-    const typeIcon = c.type === 'created' ? '+' : c.type === 'deleted' ? '-' : '~';
-    const typeColor = c.type === 'created' ? 'var(--green)' : c.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
-    const risk = c.impact ? c.impact.risk : 'LOW';
-    const isLatest = (i === 0);
+  // ── Latest change: full story view ──
+  const latest = changeHistory[0];
+  if (latest) {
+    const story = buildChangeStory(latest);
+    const file = (latest.file || '').split('/').pop();
+    const risk = latest.impact ? latest.impact.risk : 'LOW';
+    const riskColor = risk === 'CRITICAL' ? 'var(--red)' : risk === 'HIGH' ? 'var(--peach)' : risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
+    const typeLabel = latest.type === 'created' ? 'NEW FILE' : latest.type === 'deleted' ? 'DELETED' : 'MODIFIED';
+    const typeColor = latest.type === 'created' ? 'var(--green)' : latest.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
 
-    html += '<div style="padding:5px 4px;border-bottom:1px solid var(--surface0);' + (isLatest ? 'background:var(--surface0);border-radius:4px;margin-bottom:2px' : '') + '">';
+    html += '<div style="background:var(--surface0);border-radius:6px;padding:8px;margin-bottom:8px;border-left:3px solid ' + riskColor + '">';
 
-    // Header row
-    html += '<div style="display:flex;align-items:center;gap:4px;font-size:10px;cursor:pointer" onclick="focusChange(' + i + ')">';
-    html += '<span style="color:var(--overlay0)">' + time + '</span>';
-    html += '<span style="color:' + typeColor + ';font-weight:bold;font-size:12px">' + typeIcon + '</span>';
-    html += '<span style="color:var(--text);font-weight:' + (isLatest ? 'bold' : 'normal') + '">' + file + '</span>';
-    html += '<span class="risk-badge risk-' + risk + '" style="margin-left:auto;font-size:8px">' + risk + '</span>';
+    // Header
+    html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
+    html += '<span style="color:' + typeColor + ';font-size:9px;font-weight:bold;background:' + typeColor + '18;padding:1px 5px;border-radius:3px">' + typeLabel + '</span>';
+    html += '<span style="color:var(--text);font-size:12px;font-weight:bold">' + file + '</span>';
+    html += '<span class="risk-badge risk-' + risk + '" style="margin-left:auto">' + risk + '</span>';
     html += '</div>';
 
-    // Node changes — always shown for latest, truncated for others
-    const added = (c.nodes_added || []);
-    const modified = (c.nodes_modified || []);
-    const removed = (c.nodes_removed || []);
-    const showCount = isLatest ? 10 : 3;
-
+    // What changed
+    const added = latest.nodes_added || [];
+    const modified = latest.nodes_modified || [];
+    const removed = latest.nodes_removed || [];
     if (added.length + modified.length + removed.length > 0) {
-      html += '<div style="padding:3px 0 0 18px;font-size:9px;line-height:1.6">';
-      added.slice(0, showCount).forEach(n => {
-        html += '<div style="color:var(--green)">+ ' + n + ' <span style="color:var(--surface2)">new</span></div>';
+      html += '<div style="margin-bottom:6px">';
+      html += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Changes</div>';
+      added.slice(0,8).forEach(n => {
+        html += '<div style="font-size:10px;padding:1px 0;color:var(--green)">+ ' + n + '</div>';
       });
-      modified.slice(0, showCount).forEach(n => {
-        html += '<div style="color:var(--yellow)">~ ' + n + '</div>';
+      modified.slice(0,8).forEach(n => {
+        html += '<div style="font-size:10px;padding:1px 0;color:var(--yellow)">~ ' + n + '</div>';
       });
-      removed.slice(0, showCount).forEach(n => {
-        html += '<div style="color:var(--red)">- ' + n + ' <span style="color:var(--surface2)">removed</span></div>';
+      removed.slice(0,8).forEach(n => {
+        html += '<div style="font-size:10px;padding:1px 0;color:var(--red)">- ' + n + '</div>';
       });
-      const total = added.length + modified.length + removed.length;
-      if (total > showCount) {
-        html += '<div style="color:var(--surface2)">+' + (total - showCount) + ' more</div>';
+      html += '</div>';
+    }
+
+    // Calls out to (outgoing)
+    if (story.outgoing.length > 0) {
+      html += '<div style="margin-bottom:6px">';
+      html += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Calls</div>';
+      story.outgoing.slice(0,6).forEach(dep => {
+        html += '<div style="font-size:10px;padding:1px 0;cursor:pointer;color:var(--subtext)" onclick="selectNode(\'' + dep.id + '\')">';
+        html += '<span style="color:var(--blue)">&#8594;</span> ' + dep.name + ' <span style="color:var(--surface2)">' + dep.file + '</span></div>';
+      });
+      if (story.outgoing.length > 6) html += '<div style="font-size:9px;color:var(--surface2)">+' + (story.outgoing.length-6) + ' more</div>';
+      html += '</div>';
+    }
+
+    // Depended on by (incoming)
+    if (story.incoming.length > 0) {
+      html += '<div style="margin-bottom:6px">';
+      html += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px">Depended on by</div>';
+      story.incoming.slice(0,6).forEach(dep => {
+        html += '<div style="font-size:10px;padding:1px 0;cursor:pointer;color:var(--subtext)" onclick="selectNode(\'' + dep.id + '\')">';
+        html += '<span style="color:var(--peach)">&#8592;</span> ' + dep.name + ' <span style="color:var(--surface2)">' + dep.file + '</span></div>';
+      });
+      if (story.incoming.length > 6) html += '<div style="font-size:9px;color:var(--surface2)">+' + (story.incoming.length-6) + ' more</div>';
+      html += '</div>';
+    }
+
+    // Risk summary
+    if (latest.impact && latest.impact.affected_count > 0) {
+      html += '<div style="margin-bottom:6px;padding:4px 6px;background:var(--mantle);border-radius:4px">';
+      html += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:2px;text-transform:uppercase;letter-spacing:0.5px">Impact</div>';
+      html += '<div style="font-size:10px;color:' + riskColor + '">' + latest.impact.affected_count + ' nodes in blast radius</div>';
+      html += '<div style="font-size:9px;color:var(--overlay0)">';
+      html += (story.incoming.length) + ' direct dependents, ' + activeImpactIds.size + ' total in chain';
+      html += '</div>';
+      if (latest.impact.affected_groups && latest.impact.affected_groups.length > 0) {
+        html += '<div style="font-size:9px;color:var(--overlay0);margin-top:2px">Groups: ' + latest.impact.affected_groups.slice(0,5).join(', ') + '</div>';
       }
       html += '</div>';
     }
 
-    // Impact details — shown for latest and risky changes
-    if (c.impact && c.impact.affected_count > 0 && (isLatest || risk === 'HIGH' || risk === 'CRITICAL')) {
-      html += '<div style="padding:3px 0 0 18px;font-size:9px">';
-      html += '<span style="color:var(--peach)">&#9888; ' + c.impact.affected_count + ' nodes affected</span>';
-      if (c.impact.affected_groups && c.impact.affected_groups.length > 0) {
-        html += '<div style="color:var(--overlay0);margin-top:1px">Groups: ' + c.impact.affected_groups.slice(0, 4).join(', ') + '</div>';
-      }
-      html += '</div>';
-    }
-
-    // Focus button for latest
-    if (isLatest) {
-      html += '<div style="padding:4px 0 0 18px">';
-      html += '<button onclick="focusChange(0)" style="padding:2px 10px;background:var(--blue);color:var(--bg);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Show in graph</button>';
-      html += '</div>';
-    }
-
+    // Action buttons
+    html += '<div style="display:flex;gap:6px">';
+    html += '<button onclick="focusChange(0)" style="padding:3px 10px;background:var(--blue);color:var(--bg);border:none;border-radius:3px;cursor:pointer;font-size:9px;font-family:inherit">Show in graph</button>';
     html += '</div>';
-  });
+    html += '</div>';
+  }
+
+  // ── Previous changes: compact list ──
+  if (changeHistory.length > 1) {
+    html += '<div style="font-size:9px;color:var(--overlay0);margin:6px 0 4px;text-transform:uppercase;letter-spacing:0.5px">Previous</div>';
+    changeHistory.slice(1, 20).forEach((c, i) => {
+      const time = new Date(c.timestamp * 1000).toLocaleTimeString();
+      const file = (c.file || '').split('/').pop();
+      const typeIcon = c.type === 'created' ? '+' : c.type === 'deleted' ? '-' : '~';
+      const typeColor = c.type === 'created' ? 'var(--green)' : c.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
+      const risk = c.impact ? c.impact.risk : 'LOW';
+      const nodeCount = (c.nodes_added||[]).length + (c.nodes_modified||[]).length + (c.nodes_removed||[]).length;
+
+      html += '<div style="padding:3px 4px;border-bottom:1px solid var(--surface0);font-size:10px;cursor:pointer;display:flex;align-items:center;gap:4px" onclick="focusChange(' + (i+1) + ')">';
+      html += '<span style="color:var(--overlay0);font-size:9px">' + time + '</span>';
+      html += '<span style="color:' + typeColor + ';font-weight:bold">' + typeIcon + '</span>';
+      html += '<span style="color:var(--subtext)">' + file + '</span>';
+      if (nodeCount) html += '<span style="color:var(--surface2);font-size:9px">' + nodeCount + '</span>';
+      html += '<span class="risk-badge risk-' + risk + '" style="margin-left:auto;font-size:7px">' + risk + '</span>';
+      html += '</div>';
+    });
+  }
 
   el.innerHTML = html;
-
-  // Auto-switch to Changes tab on new change
   switchTab('changes');
 }
 
