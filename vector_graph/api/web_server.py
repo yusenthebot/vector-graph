@@ -486,7 +486,7 @@ async function loadData() {
   GROUP_COLORS = {};
   groupNames.forEach((g, i) => {
     const hue = (i * 137.508) % 360;
-    GROUP_COLORS[g] = `hsl(${hue}, 65%, 60%)`;
+    GROUP_COLORS[g] = `hsl(${hue}, 80%, 58%)`;
   });
   initGraph();
   buildFilters();
@@ -508,18 +508,19 @@ function initGraph() {
     .nodeColor(n => {
       // Selected state
       if (selectedId) {
-        if (n.id === selectedId) return '#f5e0dc';
-        if (highlightNodes.has(n.id)) return COLORS[n.label] || '#cdd6f4';
-        return '#313244';
+        if (n.id === selectedId) return '#ffffff';
+        if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
+        return '#222233';
       }
-      // Health gradient
+      // Health gradient (opt-in)
       if (healthMode && n.healthRisk) {
         if (n.healthRisk === 'CRITICAL') return '#f38ba8';
         if (n.healthRisk === 'HIGH') return '#fab387';
         if (n.healthRisk === 'MEDIUM') return '#f9e2af';
         return '#a6e3a1';
       }
-      return COLORS[n.label] || '#cdd6f4';
+      // Group color — nodes match their nebula
+      return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
     })
     .nodeRelSize(4)
     .nodeVal(n => {
