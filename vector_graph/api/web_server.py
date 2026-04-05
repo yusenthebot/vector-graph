@@ -506,11 +506,11 @@ function initGraph() {
     .showNavInfo(false)
     // Node appearance — dim unconnected when something is selected
     .nodeColor(n => {
-      // Selected state
+      // Selected state — strong contrast
       if (selectedId) {
         if (n.id === selectedId) return '#ffffff';
         if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
-        return '#222233';
+        return '#08080e'; // nearly invisible
       }
       // Health gradient (opt-in)
       if (healthMode && n.healthRisk) {
@@ -524,11 +524,13 @@ function initGraph() {
     })
     .nodeRelSize(4)
     .nodeVal(n => {
+      // Shrink unselected nodes when something is selected
+      if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
       const base = SIZES[n.label] || 2;
       if (n.complexity) return base + Math.min(n.complexity * 0.3, 5);
       return base;
     })
-    .nodeOpacity(0.85)
+    .nodeOpacity(0.9)
     .nodeLabel(n => {
       const c = COLORS[n.label] || '#cdd6f4';
       let t = '<div style="background:#181825f0;padding:8px 12px;border-radius:6px;font:11px monospace;color:#cdd6f4;border:1px solid ' + c + ';max-width:360px;line-height:1.5">';
@@ -560,18 +562,18 @@ function initGraph() {
       return '#1e1e2e08'; // nearly invisible
     })
     .linkOpacity(l => {
-      if (!selectedId) return 0.12;
+      if (!selectedId) return 0.1;
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === selectedId || tid === selectedId) return 0.8;
-      return 0.02;
+      if (sid === selectedId || tid === selectedId) return 0.9;
+      return 0.0; // completely hidden
     })
     .linkWidth(l => {
-      if (!selectedId) return 0.2;
+      if (!selectedId) return 0.15;
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === selectedId || tid === selectedId) return 1.5;
-      return 0.05;
+      if (sid === selectedId || tid === selectedId) return 2.0;
+      return 0.0;
     })
     .linkCurvature(l => {
       if (l.type === 'CALLS') return 0.15;
@@ -761,10 +763,12 @@ function selectNode(id) {
     const sid = typeof l.source === 'object' ? l.source.id : l.source;
     highlightNodes.add(sid); highlightLinks.add(l);
   });
-  // Force re-render
+  // Force re-render — update colors, sizes, edges
   graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.nodeVal(graph3d.nodeVal());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
+  graph3d.linkOpacity(graph3d.linkOpacity());
   graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
   // Show inspector immediately with local data, then fetch details async
   showInspectorImmediate(id);
@@ -804,8 +808,10 @@ function deselectNode() {
   document.getElementById('inspector').classList.remove('open');
   setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
   graph3d.nodeColor(graph3d.nodeColor());
+  graph3d.nodeVal(graph3d.nodeVal());
   graph3d.linkColor(graph3d.linkColor());
   graph3d.linkWidth(graph3d.linkWidth());
+  graph3d.linkOpacity(graph3d.linkOpacity());
   // Reset nebula opacities
   if (nebulaGroup) {
     nebulaGroup.children.forEach(child => {
