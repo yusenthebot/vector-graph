@@ -920,3 +920,83 @@ class TestImpactGraphLabels:
         """2D graph uses stronger charge for >15 nodes."""
         from vector_graph.api.web_server import _HTML
         assert "-400" in _HTML
+
+
+# ---------------------------------------------------------------------------
+# Fan-in/fan-out connectivity data in build_graph_data output (v0.8.0)
+# ---------------------------------------------------------------------------
+
+class TestFanConnectivity:
+    """Fan-in/fan-out connectivity data in build_graph_data output (v0.8.0)."""
+
+    def test_includes_fan_fields(self, tmp_project: Path) -> None:
+        """Every node has fanIn and fanOut integer fields."""
+        from vector_graph.api.python_api import CodeGraph
+        cg = CodeGraph(tmp_project)
+        cg.analyze()
+        assert cg._graph is not None
+        data = build_graph_data(cg._graph, mode="deep")
+        for node in data["nodes"]:
+            assert "fanIn" in node, f"fanIn missing on {node['name']}"
+            assert "fanOut" in node, f"fanOut missing on {node['name']}"
+            assert isinstance(node["fanIn"], int) and node["fanIn"] >= 0
+            assert isinstance(node["fanOut"], int) and node["fanOut"] >= 0
+
+    def test_fan_out_counts_outbound_edges(self, tmp_project: Path) -> None:
+        """A function that calls 2 others should have fanOut >= 2."""
+        from vector_graph.api.python_api import CodeGraph
+        cg = CodeGraph(tmp_project)
+        cg.analyze()
+        assert cg._graph is not None
+        data = build_graph_data(cg._graph, mode="deep")
+        nodes_with_fanout = [n for n in data["nodes"] if n["fanOut"] >= 1]
+        assert len(nodes_with_fanout) >= 1, "Expected at least one node with fanOut >= 1"
+
+    def test_fan_in_counts_inbound_edges(self, tmp_project: Path) -> None:
+        """A function called by others should have fanIn >= 1."""
+        from vector_graph.api.python_api import CodeGraph
+        cg = CodeGraph(tmp_project)
+        cg.analyze()
+        assert cg._graph is not None
+        data = build_graph_data(cg._graph, mode="deep")
+        nodes_with_fanin = [n for n in data["nodes"] if n["fanIn"] >= 1]
+        assert len(nodes_with_fanin) >= 1, "Expected at least one node with fanIn >= 1"
+
+    def test_fan_counts_all_edge_types(self) -> None:
+        """Fan counts include IMPORTS, EXTENDS, etc. — not just CALLS."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="fa",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="a.py", file_path="/proj/a.py"),
+        ))
+        g.add_node(GraphNode(
+            id="fb",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="b.py", file_path="/proj/b.py"),
+        ))
+        g.add_edge(Edge(id="e1", source_id="fa", target_id="fb",
+                        edge_type=EdgeType.IMPORTS, confidence=1.0))
+        data = build_graph_data(g, mode="deep")
+        node_a = next(n for n in data["nodes"] if n["id"] == "fa")
+        assert node_a["fanOut"] >= 1
+
+    def test_fan_excludes_pruned_nodes(self) -> None:
+        """In architecture mode, edges to pruned (non-FILE) nodes are not counted."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(
+            id="file1",
+            label=NodeLabel.FILE,
+            properties=NodeProperties(name="mod.py", file_path="/proj/mod.py"),
+        ))
+        g.add_node(GraphNode(
+            id="fn1",
+            label=NodeLabel.FUNCTION,
+            properties=NodeProperties(name="foo", file_path="/proj/mod.py"),
+        ))
+        g.add_edge(Edge(id="e1", source_id="file1", target_id="fn1",
+                        edge_type=EdgeType.CONTAINS, confidence=1.0))
+        # architecture mode only includes FILE nodes; fn1 is pruned
+        data = build_graph_data(g, mode="architecture")
+        file_node = next(n for n in data["nodes"] if n["id"] == "file1")
+        assert file_node["fanOut"] == 0

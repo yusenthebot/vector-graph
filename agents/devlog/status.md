@@ -12,6 +12,11 @@
   - tests/unit/test_web_api.py (TestResizablePanels: 2 tests)
 
 ## Alpha
+- **Status**: in_progress
+- **Task**: P0-2 Backend — Add fan-in/fan-out connectivity data to build_graph_data()
+- **Branch**: feat/alpha-fan-connectivity
+
+## Alpha (prev)
 - **Status**: done
 - **Task**: Add visualization mode selector UI + keyboard shortcuts to frontend
 - **Branch**: feat/alpha-mode-selector-ui

@@ -153,6 +153,14 @@ def build_graph_data(
         nodes.append(entry)
         node_ids.add(node.id)
 
+    # Connectivity for size-by-importance visualization (v0.8.0)
+    for entry in nodes:
+        nid = entry["id"]
+        fan_in = sum(1 for e in graph.get_edges_to(nid) if e.source_id in node_ids)
+        fan_out = sum(1 for e in graph.get_edges_from(nid) if e.target_id in node_ids)
+        entry["fanIn"] = fan_in
+        entry["fanOut"] = fan_out
+
     # Architecture mode: enrich FILE nodes with symbol counts from the full graph
     if mode == "architecture":
         file_function_counts: dict[str, int] = {}
