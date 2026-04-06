@@ -47,6 +47,7 @@ let hotspotMode = false; // OFF by default — git change frequency heatmap
 
 let currentMode = localStorage.getItem('vg-mode') || 'logic';
 let sessionChangeCount = {};  // symbol name -> change count this session
+let impactGraph2d = null; // ForceGraph 2D instance (canvas-based, vasturiano/force-graph)
 let changeViewMode = 'summary'; // 'summary' or 'detail'
 let modeCache = {}; // {architecture: {nodes, links}, logic: {nodes, links}, deep: {nodes, links}}
 
@@ -254,6 +255,7 @@ function switchMode(mode) {
   changeHighlightActive = false;
   activeChangeIds.clear();
   activeImpactIds.clear();
+  if (impactGraph2d) { impactGraph2d._destructor && impactGraph2d._destructor(); impactGraph2d = null; }
   if (nebulaGroup && graph3d) {
     const scene = graph3d.scene();
     if (scene) scene.remove(nebulaGroup);
@@ -1653,67 +1655,76 @@ async function fetchTestSuggestions(names) {
   section.innerHTML = testsHtml;
 }
 
-// Build a mini flow diagram for a changed node
-function buildFlowDiagram(nodeId) {
-  const gData = graph3d ? graph3d.graphData() : {nodes:[]};
-  const nd = gData.nodes.find(n => n.id === nodeId);
-  if (!nd) return '';
+// Build 2D impact subgraph data (nodes + links) for canvas rendering
+function buildImpactSubgraph() {
+  const gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
+  const subNodes = new Map(); // id -> node data
+  const subLinks = [];
 
-  // Collect callers (incoming CALLS edges) and callees (outgoing CALLS edges)
-  const callers = [];
-  const callees = [];
-  (linkIndex.to[nodeId] || []).forEach(l => {
-    if (l.type !== 'CALLS') return;
+  // 1. Add changed nodes
+  gData.nodes.forEach(n => {
+    if (activeChangeIds.has(n.id)) {
+      subNodes.set(n.id, {...n, _role: 'changed'});
+    }
+  });
+
+  // 2. Add direct callers and callees (1 hop from changed nodes)
+  activeChangeIds.forEach(nid => {
+    // Callers (incoming CALLS/IMPORTS)
+    (linkIndex.to[nid] || []).forEach(l => {
+      if (l.type !== 'CALLS' && l.type !== 'IMPORTS') return;
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      if (!subNodes.has(sid)) {
+        const src = gData.nodes.find(n => n.id === sid);
+        if (src) subNodes.set(sid, {...src, _role: 'caller'});
+      }
+    });
+    // Callees (outgoing CALLS/IMPORTS)
+    (linkIndex.from[nid] || []).forEach(l => {
+      if (l.type !== 'CALLS' && l.type !== 'IMPORTS') return;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (!subNodes.has(tid)) {
+        const tgt = gData.nodes.find(n => n.id === tid);
+        if (tgt) subNodes.set(tid, {...tgt, _role: 'callee'});
+      }
+    });
+  });
+
+  // 3. Cap at 50 nodes — prioritize changed, then by connection count
+  let nodes = [...subNodes.values()];
+  if (nodes.length > 50) {
+    const changed = nodes.filter(n => n._role === 'changed');
+    const rest = nodes.filter(n => n._role !== 'changed')
+      .sort((a, b) => {
+        const ac = (linkIndex.from[a.id]||[]).length + (linkIndex.to[a.id]||[]).length;
+        const bc = (linkIndex.from[b.id]||[]).length + (linkIndex.to[b.id]||[]).length;
+        return bc - ac;
+      });
+    nodes = [...changed, ...rest.slice(0, 50 - changed.length)];
+  }
+
+  const nodeIds = new Set(nodes.map(n => n.id));
+
+  // 4. Add edges between included nodes
+  gData.links.forEach(l => {
     const sid = typeof l.source === 'object' ? l.source.id : l.source;
-    const src = gData.nodes.find(n => n.id === sid);
-    if (src) callers.push(src);
-  });
-  (linkIndex.from[nodeId] || []).forEach(l => {
-    if (l.type !== 'CALLS') return;
     const tid = typeof l.target === 'object' ? l.target.id : l.target;
-    const tgt = gData.nodes.find(n => n.id === tid);
-    if (tgt) callees.push(tgt);
+    if (nodeIds.has(sid) && nodeIds.has(tid)) {
+      subLinks.push({source: sid, target: tid, type: l.type});
+    }
   });
 
-  if (callers.length === 0 && callees.length === 0) return '';
-
-  let html = '<div class="flow-diagram">';
-
-  // Left column: callers
-  if (callers.length > 0) {
-    html += '<div class="flow-col">';
-    callers.slice(0, 4).forEach(c => {
-      html += '<div class="flow-node flow-node-caller" onclick="previewNode(\'' + c.id + '\')" title="' + c.name + ' calls this function">';
-      html += c.name;
-      html += '<div class="flow-node-file">' + (c.file || '').split('/').pop() + '</div></div>';
-    });
-    if (callers.length > 4) html += '<div class="flow-more">+' + (callers.length - 4) + ' more</div>';
-    html += '</div>';
-    html += '<div class="flow-arrow">&#8594;</div>';
-  }
-
-  // Center: changed node
-  html += '<div class="flow-col">';
-  html += '<div class="flow-node flow-node-changed" onclick="previewNode(\'' + nd.id + '\')" title="Changed function">';
-  html += '<b>' + nd.name + '</b>';
-  html += '<div class="flow-node-file">' + (nd.file || '').split('/').pop() + '</div></div>';
-  html += '</div>';
-
-  // Right column: callees
-  if (callees.length > 0) {
-    html += '<div class="flow-arrow">&#8594;</div>';
-    html += '<div class="flow-col">';
-    callees.slice(0, 4).forEach(c => {
-      html += '<div class="flow-node flow-node-callee" onclick="previewNode(\'' + c.id + '\')" title="This function calls ' + c.name + '">';
-      html += c.name;
-      html += '<div class="flow-node-file">' + (c.file || '').split('/').pop() + '</div></div>';
-    });
-    if (callees.length > 4) html += '<div class="flow-more">+' + (callees.length - 4) + ' more</div>';
-    html += '</div>';
-  }
-
-  html += '</div>';
-  return html;
+  return {
+    nodes: nodes.map(n => ({
+      id: n.id,
+      name: n.name,
+      label: n.label,
+      file: (n.file || '').split('/').pop(),
+      _role: n._role,
+      group: n.group,
+    })),
+    links: subLinks,
+  };
 }
 
 function focusChangeFile(fname) {
@@ -1966,21 +1977,15 @@ function showImpactPanel(change) {
     if (change.impact) html += ' &middot; ' + change.impact.affected_count + ' in blast radius';
     html += '</div></div></div>';
 
-    // Flow diagrams for each changed function (max 5)
-    const changedItems = [];
-    added.forEach((name, i) => { const nd = findChangedNode(name, i, idsAdded); if (nd) changedItems.push({name, nd, type: 'added'}); });
-    modified.forEach((name, i) => { const nd = findChangedNode(name, i, idsModified); if (nd) changedItems.push({name, nd, type: 'modified'}); });
-
-    if (changedItems.length > 0) {
-      html += '<div class="insp-section"><h4>Impact Flow</h4>';
-      changedItems.slice(0, 5).forEach(item => {
-        const typeC = item.type === 'added' ? 'var(--green)' : 'var(--yellow)';
-        const prefix = item.type === 'added' ? '+' : '~';
-        html += '<div style="font-size:10px;color:' + typeC + ';margin-bottom:2px"><b>' + prefix + ' ' + item.name + '</b></div>';
-        html += buildFlowDiagram(item.nd.id);
-      });
-      if (changedItems.length > 5) html += '<div style="font-size:10px;color:var(--overlay0)">+' + (changedItems.length - 5) + ' more changes...</div>';
-      html += '</div>';
+    // ── 2D Impact Graph ──
+    if (activeChangeIds.size > 0 && typeof ForceGraph !== 'undefined') {
+      html += '<div class="insp-section"><h4>Impact Graph</h4>';
+      html += '<div id="impact-graph-container">';
+      html += '<div class="impact-graph-legend">';
+      html += '<span class="legend-changed">changed</span>';
+      html += '<span class="legend-caller">callers</span>';
+      html += '<span class="legend-callee">callees</span>';
+      html += '</div></div></div>';
     }
 
     // Removed — show old code + orphaned callers
@@ -2146,6 +2151,59 @@ function showImpactPanel(change) {
 
   document.getElementById('insp-body').innerHTML = html;
 
+  // Initialize 2D impact graph if container exists
+  setTimeout(() => {
+    const container = document.getElementById('impact-graph-container');
+    if (!container || typeof ForceGraph === 'undefined') return;
+
+    // Destroy previous instance
+    if (impactGraph2d) {
+      impactGraph2d._destructor && impactGraph2d._destructor();
+      impactGraph2d = null;
+    }
+
+    const subgraph = buildImpactSubgraph();
+    if (subgraph.nodes.length === 0) return;
+
+    const width = container.clientWidth;
+    const height = 280;
+
+    impactGraph2d = ForceGraph()(container)
+      .graphData(subgraph)
+      .width(width)
+      .height(height)
+      .backgroundColor('#1e1e2e')
+      .nodeColor(n => {
+        if (n._role === 'changed') return '#f9e2af';
+        if (n._role === 'caller') return '#fab387';
+        if (n._role === 'callee') return '#89b4fa';
+        return '#585b70';
+      })
+      .nodeVal(n => n._role === 'changed' ? 5 : 2.5)
+      .nodeLabel(n => n.name + ' (' + n.file + ')')
+      .nodeCanvasObjectMode(() => 'after')
+      .nodeCanvasObject((n, ctx, globalScale) => {
+        const label = n.name;
+        const fontSize = Math.max(10 / globalScale, 2);
+        ctx.font = fontSize + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = n._role === 'changed' ? '#f9e2af' : n._role === 'caller' ? '#fab387' : n._role === 'callee' ? '#89b4fa' : '#a6adc8';
+        ctx.fillText(label, n.x, n.y + 5);
+      })
+      .linkColor(() => '#45475a')
+      .linkWidth(1)
+      .linkDirectionalArrowLength(4)
+      .linkDirectionalArrowRelPos(1)
+      .linkCurvature(0.15)
+      .linkLabel(l => l.type)
+      .onNodeClick(n => {
+        if (n && n.id) previewNode(n.id);
+      })
+      .cooldownTicks(60)
+      .warmupTicks(30);
+  }, 100);
+
   // Fetch test suggestions async
   if (changedNames.length > 0) {
     fetchTestSuggestions(changedNames);
@@ -2202,6 +2260,8 @@ function clearChangeHighlight() {
   changeHighlightActive = false;
   activeChangeIds.clear();
   activeImpactIds.clear();
+  // Destroy 2D impact graph
+  if (impactGraph2d) { impactGraph2d._destructor && impactGraph2d._destructor(); impactGraph2d = null; }
   // Remove pulsing glow rings
   if (_changeGlowGroup && graph3d) {
     const scene = graph3d.scene();
@@ -2443,6 +2503,11 @@ function initResize() {
         const w = panel.getBoundingClientRect().width;
         localStorage.setItem(side === 'left' ? 'vg-sidebar-width' : 'vg-inspector-width', Math.round(w));
         if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth);
+        // Resize 2D impact graph if present
+        if (impactGraph2d) {
+          const ic = document.getElementById('impact-graph-container');
+          if (ic) impactGraph2d.width(ic.clientWidth);
+        }
       }
       handle.addEventListener('pointermove', onMove);
       handle.addEventListener('pointerup', onUp);

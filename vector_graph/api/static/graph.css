@@ -241,3 +241,42 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   color: var(--mauve);
   margin-left: 4px;
 }
+
+/* 2D Impact graph in inspector panel */
+#impact-graph-container {
+  width: 100%;
+  height: 280px;
+  background: var(--base);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+#impact-graph-container canvas {
+  cursor: grab !important;
+}
+#impact-graph-container canvas:active {
+  cursor: grabbing !important;
+}
+.impact-graph-legend {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  font-size: 8px;
+  color: var(--overlay0);
+  z-index: 5;
+  pointer-events: none;
+  display: flex;
+  gap: 8px;
+}
+.impact-graph-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+.legend-changed::before { background: #f9e2af; }
+.legend-caller::before { background: #fab387; }
+.legend-callee::before { background: #89b4fa; }
