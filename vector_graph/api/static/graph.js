@@ -36,6 +36,7 @@ const _STRUCTURAL_EDGES = new Set(['CONTAINS','HAS_METHOD','DEFINES','HAS_PROPER
 let enabledEdges = new Set(Object.keys(EDGE_COLORS).filter(e => !_STRUCTURAL_EDGES.has(e)));
 let selectedId = null;
 let hoveredId = null;
+let sidebarCollapsed = localStorage.getItem('vg-sidebar-collapsed') === 'true';
 let highlightNodes = new Set();
 let highlightLinks = new Set();
 let depthFilter = 0; // 0 = all
@@ -75,9 +76,9 @@ function _initGeo() {
 function getNodeColor(n) {
   // 1. User selection (click) — highest priority
   if (selectedId) {
-    if (n.id === selectedId) return '#ffffff';
+    if (n.id === selectedId) return '#cdd6f4'; // bright but not white — readable
     if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
-    return '#08080e';
+    return '#313244'; // dimmed but visible — spatial context preserved
   }
   // 2. Change highlight — spotlight: changed nodes glow, rest keeps NORMAL color
   if (changeHighlightActive) {
@@ -112,7 +113,7 @@ function getNodeColor(n) {
 
 // ── Extracted node size logic ──
 function getNodeSize(n) {
-  if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
+  if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 1.0;
   let base = SIZES[n.label] || 2;
   // Connectivity-based sizing (v0.8.0)
   const connectivity = (n.fanIn || 0) + (n.fanOut || 0);
@@ -349,73 +350,70 @@ function initGraph() {
       // User selection
       if (selectedId) {
         if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
-        return '#08080e';
+        return '#1e1e2e'; // faint — not invisible
       }
       // Change highlight — spotlight: direct edges bright, rest keep normal color
       if (changeHighlightActive) {
         const srcChanged = activeChangeIds.has(sid);
         const tgtChanged = activeChangeIds.has(tid);
-        // Direct edges from/to changed nodes: bright
         if (srcChanged || tgtChanged) return '#fab387';
-        // Impact chain edges (both ends in impact set): faint amber
         if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return '#fab38733';
-        // SPOTLIGHT: all other edges keep their normal color
         return EDGE_COLORS[l.type] || '#45475a';
       }
       // Hover — show edges touching hovered node
       if (hoveredId) {
         if (sid === hoveredId || tid === hoveredId) return EDGE_COLORS[l.type] || '#89b4fa';
-        return 'transparent';
       }
-      // Default: edges hidden
-      return 'transparent';
+      // Default: faint baseline edges
+      return EDGE_COLORS[l.type] || '#45475a';
     })
     .linkOpacity(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
       if (selectedId) {
-        return (sid === selectedId || tid === selectedId) ? 0.9 : 0.0;
+        return (sid === selectedId || tid === selectedId) ? 0.4 : 0.01;
       }
       if (changeHighlightActive) {
         const srcChanged = activeChangeIds.has(sid);
         const tgtChanged = activeChangeIds.has(tid);
-        // Direct: bright. Impact chain: subtle. Rest: normal opacity (spotlight mode)
         if (srcChanged || tgtChanged) return 0.6;
         if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.08;
-        // SPOTLIGHT: normal edge opacity — spatial context preserved
         if (l.type === 'CALLS') return 0.04;
         if (l.type === 'IMPORTS') return 0.03;
         return 0.02;
       }
-      // Hover — show edges touching hovered node
+      // Hover — boost edges touching hovered node
       if (hoveredId) {
-        return (sid === hoveredId || tid === hoveredId) ? 0.5 : 0;
+        if (sid === hoveredId || tid === hoveredId) return 0.4;
       }
-      // Default: edges hidden
-      return 0;
+      // Default: faint baseline
+      if (l.type === 'CALLS') return 0.015;
+      if (l.type === 'IMPORTS') return 0.012;
+      return 0.008;
     })
     .linkWidth(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
       if (selectedId) {
-        return (sid === selectedId || tid === selectedId) ? 2.0 : 0.0;
+        return (sid === selectedId || tid === selectedId) ? 0.8 : 0.05;
       }
       if (changeHighlightActive) {
         const srcChanged = activeChangeIds.has(sid);
         const tgtChanged = activeChangeIds.has(tid);
-        if (srcChanged || tgtChanged) return 2.0;
+        if (srcChanged || tgtChanged) return 1.5;
         if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.3;
-        // SPOTLIGHT: normal width — not zero
-        if (l.type === 'CALLS') return 0.3;
-        if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.2;
-        return 0.1;
+        if (l.type === 'CALLS') return 0.15;
+        if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.1;
+        return 0.05;
       }
-      // Hover — show edges touching hovered node
+      // Hover — boost edges touching hovered node
       if (hoveredId) {
-        return (sid === hoveredId || tid === hoveredId) ? 1.5 : 0;
+        if (sid === hoveredId || tid === hoveredId) return 1.0;
       }
-      // Default: edges hidden
-      return 0;
+      // Default: faint baseline
+      if (l.type === 'CALLS') return 0.15;
+      if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.1;
+      return 0.05;
     })
     .linkCurvature(l => {
       if (l.type === 'CALLS') return 0.15;
@@ -663,7 +661,25 @@ function selectNode(id) {
   updateDepthButtons();
 }
 
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed', sidebarCollapsed);
+  document.getElementById('sidebar-resize').classList.toggle('hidden', sidebarCollapsed);
+  localStorage.setItem('vg-sidebar-collapsed', sidebarCollapsed);
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 50);
+}
+
+function toggleInspector() {
+  var inspector = document.getElementById('inspector');
+  if (!inspector.classList.contains('open')) return;
+  inspector.classList.toggle('collapsed');
+  document.getElementById('inspector-resize').classList.toggle('hidden');
+  setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 50);
+}
+
 function deselectNode() {
+  document.getElementById('inspector').classList.remove('collapsed');
+  document.getElementById('inspector-resize').classList.remove('hidden');
   selectedId = null;
   depthFilter = 0;
   highlightNodes.clear();
@@ -1325,6 +1341,8 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); }
   // Mode keyboard shortcuts — only when not typing in an input
   if (!document.activeElement || document.activeElement.tagName !== 'INPUT') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'i') { e.preventDefault(); toggleInspector(); return; }
     if (e.key === '1') { switchMode('architecture'); return; }
     if (e.key === '2') { switchMode('logic'); return; }
     if (e.key === '3') { switchMode('deep'); return; }
@@ -2635,6 +2653,10 @@ function initResize() {
 
 // Initialize resize after DOM ready
 initResize();
+if (sidebarCollapsed) {
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('sidebar-resize').classList.add('hidden');
+}
 
 // ── Start ───────────────────────────────────────────────────
 // Request notification permission on load

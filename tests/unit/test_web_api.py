@@ -1024,3 +1024,31 @@ class TestHoverEdgesAndConnectivitySizing:
         assert "n.fanIn" in _HTML
         assert "n.fanOut" in _HTML
         assert "Math.log2" in _HTML
+
+
+class TestPanelCollapse:
+    """Panel collapse with keyboard shortcuts (v0.9.0)."""
+
+    def test_css_sidebar_collapsed(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#sidebar.collapsed' in _HTML
+
+    def test_css_inspector_collapsed(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#inspector.collapsed' in _HTML
+
+    def test_js_toggle_sidebar(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function toggleSidebar()' in _HTML
+
+    def test_js_toggle_inspector(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function toggleInspector()' in _HTML
+
+    def test_js_ctrl_b_shortcut(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'toggleSidebar' in _HTML
+
+    def test_js_sidebar_state_persisted(self):
+        from vector_graph.api.web_server import _HTML
+        assert "'vg-sidebar-collapsed'" in _HTML

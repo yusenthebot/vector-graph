@@ -121,6 +121,9 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
   background: var(--blue);
   opacity: 0.4;
 }
+#sidebar.collapsed { width: 0 !important; min-width: 0 !important; overflow: hidden; border-right: none; }
+#inspector.collapsed { width: 0 !important; min-width: 0 !important; overflow: hidden; border-left: none; }
+.resize-handle.hidden { display: none; }
 
 /* Diff blocks — shown by default */
 .diff-block {
