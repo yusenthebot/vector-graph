@@ -213,6 +213,7 @@ let cumulativeHeat = {};            // nodeId -> change count this session
 let changeHighlightActive = false;  // true when showing change overlay
 let _changeGlowGroup = null;        // THREE.Group of pulsing glow spheres for changed nodes
 let _selectionGlowGroup = null;     // THREE.Group of pulsing glow spheres for selected node
+let _constellationTimeout = null;   // handle for constellation force removal timer
 
 // ── Change grouping state (5-second debounce window) ──
 let changeGroupBuffer = [];       // buffered change events
@@ -539,12 +540,6 @@ function initGraph() {
       if (changeHighlightActive) return '#f9e2af'; // warm yellow particles for changes
       return EDGE_COLORS[l.type] || '#89b4fa';
     })
-    // Edge dash patterns — requires 3d-force-graph support
-    .linkLineDash(l => {
-      if (l.type === 'IMPORTS') return [4, 2];
-      if (l.type === 'EXTENDS' || l.type === 'IMPLEMENTS') return [1, 2];
-      return null;
-    })
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onNodeHover(n => { hoveredId = n ? n.id : null; })
     .onBackgroundClick(() => { deselectNode(); clearChangeHighlight(); })
@@ -555,6 +550,15 @@ function initGraph() {
     .d3AlphaMin(0.01)
     .enableNodeDrag(true)
     .enableNavigationControls(true)
+
+  // Edge dash patterns — conditional: linkLineDash not available in all 3d-force-graph versions
+  if (typeof graph3d.linkLineDash === 'function') {
+    graph3d.linkLineDash(function(l) {
+      if (l.type === 'IMPORTS') return [4, 2];
+      if (l.type === 'EXTENDS' || l.type === 'IMPLEMENTS') return [1, 2];
+      return null;
+    });
+  }
 
   // Add lights for MeshLambertMaterial visibility
   const scene = graph3d.scene();
@@ -760,9 +764,11 @@ function selectNode(id) {
       });
       // Restart simulation briefly
       graph3d.d3ReheatSimulation();
-      // Remove force after 1.5s
-      setTimeout(function() {
+      // Remove force after 1.5s — clear any pending timeout to avoid conflicts on rapid re-selection
+      if (_constellationTimeout) clearTimeout(_constellationTimeout);
+      _constellationTimeout = setTimeout(function() {
         if (graph3d) graph3d.d3Force('constellation', null);
+        _constellationTimeout = null;
       }, 1500);
     }
   }
@@ -978,7 +984,13 @@ function updateNebulae() {
   if (!scene) return;
 
   // Remove old nebulae
-  if (nebulaGroup) scene.remove(nebulaGroup);
+  if (nebulaGroup) {
+    nebulaGroup.traverse(function(obj) {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) { if (obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
+    });
+    scene.remove(nebulaGroup);
+  }
   nebulaGroup = new THREE.Group();
 
   // Group real nodes by group field
@@ -2671,7 +2683,13 @@ function clearChangeHighlight() {
   // Remove pulsing glow rings
   if (_changeGlowGroup && graph3d) {
     const scene = graph3d.scene();
-    if (scene) scene.remove(_changeGlowGroup);
+    if (scene) {
+      _changeGlowGroup.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) { if (obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
+      });
+      scene.remove(_changeGlowGroup);
+    }
     _changeGlowGroup = null;
   }
   // Close impact panel
@@ -2727,16 +2745,22 @@ function addSelectionGlow(nodeId) {
     var s2 = (SIZES[nd.label] || 2) * 2.0;
     g2.scale.set(s2, s2, s2);
     g2.position.set(nd.x || 0, nd.y || 0, nd.z || 0);
+    g2.userData = { nodeId: nid };
     _selectionGlowGroup.add(g2);
   });
 
   scene.add(_selectionGlowGroup);
 
-  // Pulse animation for primary glow
+  // Pulse animation for primary glow — also tracks live node positions during simulation
   function pulseSelGlow() {
     if (!_selectionGlowGroup || !selectedId) return;
     var t = (Date.now() % 3000) / 3000;
+    var gData = graph3d ? graph3d.graphData() : null;
     _selectionGlowGroup.children.forEach(function(child) {
+      if (child.userData && child.userData.nodeId && gData) {
+        var nd = gData.nodes.find(function(n) { return n.id === child.userData.nodeId; });
+        if (nd) child.position.set(nd.x || 0, nd.y || 0, nd.z || 0);
+      }
       if (child.userData && child.userData.isPrimary) {
         child.material.opacity = 0.2 + 0.2 * Math.sin(t * Math.PI * 2);
       }
@@ -2749,7 +2773,13 @@ function addSelectionGlow(nodeId) {
 function removeSelectionGlow() {
   if (_selectionGlowGroup && graph3d) {
     var scene = graph3d.scene();
-    if (scene) scene.remove(_selectionGlowGroup);
+    if (scene) {
+      _selectionGlowGroup.traverse(function(obj) {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) { if (obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
+      });
+      scene.remove(_selectionGlowGroup);
+    }
     _selectionGlowGroup = null;
   }
 }
@@ -3035,16 +3065,17 @@ function updateMinimap() {
   // Compute bounding box (XZ plane)
   var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   nodes.forEach(function(n) {
-    if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
-    if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
+    var x = n.x || 0, z = n.z || 0;
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
   });
   var rangeX = (maxX - minX) || 1, rangeZ = (maxZ - minZ) || 1;
   var pad = 10;
 
   // Draw nodes as dots
   nodes.forEach(function(n) {
-    var px = pad + (n.x - minX) / rangeX * (w - pad * 2);
-    var py = pad + (n.z - minZ) / rangeZ * (h - pad * 2);
+    var px = pad + ((n.x || 0) - minX) / rangeX * (w - pad * 2);
+    var py = pad + ((n.z || 0) - minZ) / rangeZ * (h - pad * 2);
     ctx.fillStyle = GROUP_COLORS[n.group] || COLORS[n.label] || '#585b70';
     ctx.globalAlpha = 0.7;
     ctx.beginPath();
