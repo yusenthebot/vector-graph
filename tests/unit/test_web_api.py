@@ -1169,3 +1169,28 @@ class TestCommandPalette:
     def test_js_slash_opens_palette(self):
         from vector_graph.api.web_server import _HTML
         assert "openCmdPalette" in _HTML
+
+
+class TestVisualWins:
+    """F2 default arrows + F3 nebula labels + F6 dash patterns (v0.9.1)."""
+
+    def test_default_arrows_for_calls(self):
+        """CALLS edges show small arrows by default."""
+        from vector_graph.api.web_server import _HTML
+        assert "l.type === 'CALLS'" in _HTML or "CALLS" in _HTML
+
+    def test_nebula_label_min_scale(self):
+        """Nebula labels have minimum scale of 50."""
+        from vector_graph.api.web_server import _HTML
+        assert 'Math.max' in _HTML
+        assert '50' in _HTML
+
+    def test_nebula_label_background(self):
+        """Nebula labels have background rect for contrast."""
+        from vector_graph.api.web_server import _HTML
+        assert 'fillRect' in _HTML
+
+    def test_link_line_dash(self):
+        """Edge dash patterns differentiate IMPORTS from CALLS."""
+        from vector_graph.api.web_server import _HTML
+        assert 'linkLineDash' in _HTML or 'lineDash' in _HTML

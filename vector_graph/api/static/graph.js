@@ -446,7 +446,7 @@ function initGraph() {
       if (hoveredId) {
         return (sid === hoveredId || tid === hoveredId) ? 2.5 : 0;
       }
-      if (!selectedId) return 0; // hide arrows when nothing selected — big perf win
+      if (!selectedId) return l.type === 'CALLS' ? 1.0 : 0; // small default arrow for CALLS directional hint
       return (sid === selectedId || tid === selectedId) ? 3 : 0;
     })
     .linkDirectionalArrowRelPos(1)
@@ -470,6 +470,12 @@ function initGraph() {
     .linkDirectionalParticleColor(l => {
       if (changeHighlightActive) return '#f9e2af'; // warm yellow particles for changes
       return EDGE_COLORS[l.type] || '#89b4fa';
+    })
+    // Edge dash patterns — requires 3d-force-graph support
+    .linkLineDash(l => {
+      if (l.type === 'IMPORTS') return [4, 2];
+      if (l.type === 'EXTENDS' || l.type === 'IMPLEMENTS') return [1, 2];
+      return null;
     })
     .onNodeClick(n => { if (n) selectNode(n.id); })
     .onNodeHover(n => { hoveredId = n ? n.id : null; })
@@ -990,11 +996,18 @@ function updateNebulae() {
     // Glow background
     ctx.shadowColor = GROUP_COLORS[name] || '#888';
     ctx.shadowBlur = 30;
-    ctx.font = 'bold 52px monospace';
+    ctx.font = 'bold 60px monospace';
     ctx.fillStyle = GROUP_COLORS[name] || '#cdd6f4';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const shortName = name.split('/').pop() || name;
+    // Dark background for readability
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(17, 17, 27, 0.6)';
+    const textWidth = ctx.measureText(shortName).width;
+    ctx.fillRect(512 - textWidth/2 - 10, 20, textWidth + 20, 45);
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = GROUP_COLORS[name] || '#cdd6f4';
     ctx.fillText(shortName, 512, 50);
     // Count subtitle
     ctx.shadowBlur = 0;
@@ -1010,7 +1023,7 @@ function updateNebulae() {
       blending: THREE.AdditiveBlending,
     });
     const sprite = new THREE.Sprite(spriteMat);
-    const scale = Math.max(radius * 1.2, 35);
+    const scale = Math.max(radius * 1.2, 50);
     sprite.position.set(cx, cy + radius + 10, cz);
     sprite.scale.set(scale, scale * 0.125, 1);
     sprite.userData = { groupName: name, isLabel: true };
