@@ -1622,19 +1622,29 @@ async function fetchTestSuggestions(names) {
   const loading = document.getElementById('test-suggestions-loading');
   if (!section) return;
 
+  // Fetch in parallel with 3s timeout per request
   const allSuggestions = [];
-  for (const name of names) {
-    try {
-      const r = await fetch('/api/suggest-tests?name=' + encodeURIComponent(name));
-      const d = await r.json();
-      if (d.suggestions) allSuggestions.push(...d.suggestions);
-    } catch(e) {}
-  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const results = await Promise.allSettled(
+      names.slice(0, 5).map(name =>  // max 5 to avoid flooding
+        fetch('/api/suggest-tests?name=' + encodeURIComponent(name), {signal: controller.signal})
+          .then(r => r.json())
+      )
+    );
+    results.forEach(r => {
+      if (r.status === 'fulfilled' && r.value.suggestions) {
+        allSuggestions.push(...r.value.suggestions);
+      }
+    });
+  } catch(e) {}
+  clearTimeout(timeout);
 
   if (loading) loading.remove();
 
   if (allSuggestions.length === 0) {
-    section.innerHTML = '<h4>Tests to Run</h4><div style="font-size:10px;color:var(--overlay0)">No test suggestions found</div>';
+    section.innerHTML = '<h4>Tests to Run</h4><div style="font-size:10px;color:var(--overlay0)">No related tests found in call graph</div>';
     return;
   }
 
