@@ -1539,6 +1539,12 @@ function buildFlowDiagram(nodeId) {
   return html;
 }
 
+function focusChangeFile(fname) {
+  // Find and re-trigger the most recent change event for this filename
+  const evt = changeHistory.find(c => (c.file || '').split('/').pop() === fname);
+  if (evt) handleChangeEvent(evt);
+}
+
 function setChangeView(mode) {
   changeViewMode = mode;
   // Re-render with the last change event
@@ -1587,7 +1593,35 @@ function showImpactPanel(change) {
 
   if (changeViewMode === 'summary') {
     // ═══════════════ SUMMARY MODE ═══════════════
-    // Summary card
+
+    // Session overview — aggregate all files changed this session
+    if (changeHistory.length > 1) {
+      const fileMap = {};
+      changeHistory.forEach(c => {
+        const f = (c.file || '').split('/').pop();
+        if (!fileMap[f]) fileMap[f] = {added: 0, modified: 0, removed: 0, risk: 'LOW', file: c.file};
+        fileMap[f].added += (c.nodes_added || []).length;
+        fileMap[f].modified += (c.nodes_modified || []).length;
+        fileMap[f].removed += (c.nodes_removed || []).length;
+        const riskOrder = {LOW:0, MEDIUM:1, HIGH:2, CRITICAL:3};
+        if (c.impact && riskOrder[c.impact.risk] > riskOrder[fileMap[f].risk]) fileMap[f].risk = c.impact.risk;
+      });
+      const files = Object.entries(fileMap).sort((a,b) => (b[1].added+b[1].modified+b[1].removed) - (a[1].added+a[1].modified+a[1].removed));
+      html += '<div class="insp-section"><h4>Session: ' + files.length + ' files changed</h4>';
+      files.forEach(([fname, stats]) => {
+        const rc = stats.risk === 'CRITICAL' ? 'var(--red)' : stats.risk === 'HIGH' ? 'var(--peach)' : stats.risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
+        html += '<div style="display:flex;gap:6px;align-items:center;padding:2px 0;font-size:10px;cursor:pointer" onclick="focusChangeFile(\'' + escHtml(fname) + '\')">';
+        html += '<span style="color:var(--subtext);min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fname + '</span>';
+        if (stats.added) html += '<span style="color:var(--green)">+' + stats.added + '</span>';
+        if (stats.modified) html += '<span style="color:var(--yellow)">~' + stats.modified + '</span>';
+        if (stats.removed) html += '<span style="color:var(--red)">-' + stats.removed + '</span>';
+        html += '<span class="risk-badge risk-' + stats.risk + '" style="margin-left:auto;font-size:8px;padding:0 4px">' + stats.risk + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Current file summary card
     html += '<div class="insp-section"><div class="change-summary" style="border-left-color:' + riskColor + '">';
     html += '<div class="change-summary-title" style="color:' + typeColor + '">' + typeLabel + ' ' + file + '</div>';
     html += '<div class="change-summary-stats">';

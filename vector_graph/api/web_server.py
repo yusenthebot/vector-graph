@@ -496,12 +496,18 @@ def serve(
             if path == "/" or path == "/index.html":
                 self._respond(200, "text/html", html_bytes)
             elif path == "/api/logo":
-                logo_path = Path(root_resolved) / "logo.png"
-                if not logo_path.exists():
-                    # Fallback: look next to package
-                    logo_path = Path(__file__).parent.parent.parent / "logo.png"
-                if logo_path.exists():
-                    self._respond(200, "image/png", logo_path.read_bytes())
+                # Look for logo relative to package root (../../logo.png from api/web_server.py)
+                candidates = [
+                    Path(__file__).parent.parent.parent / "logo.png",
+                    Path(root_resolved) / "logo.png",
+                ]
+                logo_data = None
+                for lp in candidates:
+                    if lp.exists():
+                        logo_data = lp.read_bytes()
+                        break
+                if logo_data:
+                    self._respond(200, "image/png", logo_data)
                 else:
                     self.send_error(404)
             elif path == "/api/data":

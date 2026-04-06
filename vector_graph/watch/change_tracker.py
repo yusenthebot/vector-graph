@@ -117,6 +117,9 @@ class ChangeTracker:
         # Before-snapshot: file_path -> {(name, label_value): (node_id, sig_hash, source_lines)}
         self._file_snapshot: dict[str, dict[tuple[str, str], tuple[str, str, str]]] = {}
         self._listeners: list[Callable[[ChangeEvent], None]] = []
+        # Persistent file content cache — stores the LAST KNOWN content per file.
+        # Updated AFTER each change cycle so snapshots always use the previous version.
+        self._file_content_cache: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -128,26 +131,36 @@ class ChangeTracker:
         Must be called BEFORE the graph is modified (nodes removed / re-added).
         Captures node IDs, AST signatures, and source code for diff computation.
 
-        Source is read from disk using start_line/end_line on each node.
-        File content is cached to avoid redundant disk reads per snapshot call.
+        Source uses the persistent content cache (previous file version) so that
+        diffs compare OLD content vs NEW content, not new vs new.
         """
         snapshot: dict[tuple[str, str], tuple[str, str, str]] = {}
-        # Cache file content per file_path to avoid reading the same file
-        # multiple times within a single snapshot call.
-        _file_content_cache: dict[str, list[str]] = {}
+
+        # Use cached content (the PREVIOUS version of the file) for old source.
+        # If no cache exists (first time), read from disk — this is fine for the
+        # initial snapshot since there's no "before" to compare against anyway.
+        cached_lines = self._file_content_cache.get(file_path)
+        if cached_lines is None:
+            try:
+                cached_lines = Path(file_path).read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                self._file_content_cache[file_path] = cached_lines
+            except OSError:
+                cached_lines = []
 
         for node in self._graph.get_nodes_by_file(file_path):
             if node.label not in _SKIP_LABELS:
                 key = (node.properties.name, node.label.value)
                 sig = _node_signature(node)
 
-                # Extract source if line info and file path are available
                 source = ""
-                node_fp = node.properties.file_path or ""
                 start = node.properties.start_line
                 end = node.properties.end_line
-                if node_fp and start and end:
-                    source = _read_source_lines(node_fp, start, end)
+                if start and end and cached_lines:
+                    s = max(0, start - 1)
+                    e = min(len(cached_lines), end)
+                    source = "\n".join(cached_lines[s:e])
 
                 snapshot[key] = (node.id, sig, source)
         self._file_snapshot[file_path] = snapshot
@@ -271,6 +284,19 @@ class ChangeTracker:
         )
         self._events.append(event)
         self._notify(event)
+
+        # Update file content cache with the CURRENT (new) version.
+        # Next snapshot_file() call will use this as the "before" content.
+        if change_type == "deleted":
+            self._file_content_cache.pop(file_path, None)
+        else:
+            try:
+                self._file_content_cache[file_path] = Path(file_path).read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            except OSError:
+                self._file_content_cache.pop(file_path, None)
+
         return event
 
     def on_change(self, callback: Callable[[ChangeEvent], None]) -> None:
