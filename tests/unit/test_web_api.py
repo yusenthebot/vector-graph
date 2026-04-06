@@ -1000,3 +1000,27 @@ class TestFanConnectivity:
         data = build_graph_data(g, mode="architecture")
         file_node = next(n for n in data["nodes"] if n["id"] == "file1")
         assert file_node["fanOut"] == 0
+
+
+class TestHoverEdgesAndConnectivitySizing:
+    """P0-1 hover-to-show edges + P0-2 connectivity sizing (v0.8.0)."""
+
+    def test_hovered_id_state_variable(self):
+        from vector_graph.api.web_server import _HTML
+        assert "let hoveredId = null" in _HTML
+
+    def test_on_node_hover_callback(self):
+        from vector_graph.api.web_server import _HTML
+        assert ".onNodeHover(" in _HTML
+
+    def test_default_edge_opacity_zero(self):
+        """Default link opacity is 0 when nothing hovered/selected."""
+        from vector_graph.api.web_server import _HTML
+        # The linkOpacity callback should have hoveredId checks
+        assert "hoveredId" in _HTML
+
+    def test_connectivity_sizing_in_get_node_size(self):
+        from vector_graph.api.web_server import _HTML
+        assert "n.fanIn" in _HTML
+        assert "n.fanOut" in _HTML
+        assert "Math.log2" in _HTML

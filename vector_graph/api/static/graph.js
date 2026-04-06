@@ -35,6 +35,7 @@ let enabledLabels = new Set(Object.keys(COLORS));
 const _STRUCTURAL_EDGES = new Set(['CONTAINS','HAS_METHOD','DEFINES','HAS_PROPERTY']);
 let enabledEdges = new Set(Object.keys(EDGE_COLORS).filter(e => !_STRUCTURAL_EDGES.has(e)));
 let selectedId = null;
+let hoveredId = null;
 let highlightNodes = new Set();
 let highlightLinks = new Set();
 let depthFilter = 0; // 0 = all
@@ -112,7 +113,17 @@ function getNodeColor(n) {
 // ── Extracted node size logic ──
 function getNodeSize(n) {
   if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
-  const base = SIZES[n.label] || 2;
+  let base = SIZES[n.label] || 2;
+  // Connectivity-based sizing (v0.8.0)
+  const connectivity = (n.fanIn || 0) + (n.fanOut || 0);
+  if (connectivity > 0) {
+    base = base * (1 + Math.log2(connectivity + 1) * 0.25);
+  }
+  // File nodes: size by symbol count
+  if (n.label === 'File' && (n.function_count || n.class_count)) {
+    const symbols = (n.function_count || 0) + (n.class_count || 0);
+    base = base * (1 + Math.log2(symbols + 1) * 0.3);
+  }
   if (changeHighlightActive) {
     if (activeChangeIds.has(n.id)) return base * 1.8; // 1.8x — noticeable but not extreme
     if (activeImpactIds.has(n.id)) return base * 1.3; // slight boost
@@ -250,6 +261,7 @@ function switchMode(mode) {
 
   // Clear state
   selectedId = null;
+  hoveredId = null;
   highlightNodes.clear();
   highlightLinks.clear();
   changeHighlightActive = false;
@@ -350,7 +362,13 @@ function initGraph() {
         // SPOTLIGHT: all other edges keep their normal color
         return EDGE_COLORS[l.type] || '#45475a';
       }
-      return EDGE_COLORS[l.type] || '#45475a';
+      // Hover — show edges touching hovered node
+      if (hoveredId) {
+        if (sid === hoveredId || tid === hoveredId) return EDGE_COLORS[l.type] || '#89b4fa';
+        return 'transparent';
+      }
+      // Default: edges hidden
+      return 'transparent';
     })
     .linkOpacity(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
@@ -369,11 +387,12 @@ function initGraph() {
         if (l.type === 'IMPORTS') return 0.03;
         return 0.02;
       }
-      // Default: edges barely visible — graph shows structure via node positions
-      // CALLS slightly more visible than others
-      if (l.type === 'CALLS') return 0.04;
-      if (l.type === 'IMPORTS') return 0.03;
-      return 0.02;
+      // Hover — show edges touching hovered node
+      if (hoveredId) {
+        return (sid === hoveredId || tid === hoveredId) ? 0.5 : 0;
+      }
+      // Default: edges hidden
+      return 0;
     })
     .linkWidth(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
@@ -391,10 +410,12 @@ function initGraph() {
         if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.2;
         return 0.1;
       }
-      // CALLS thicker than structural edges
-      if (l.type === 'CALLS') return 0.3;
-      if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.2;
-      return 0.1;
+      // Hover — show edges touching hovered node
+      if (hoveredId) {
+        return (sid === hoveredId || tid === hoveredId) ? 1.5 : 0;
+      }
+      // Default: edges hidden
+      return 0;
     })
     .linkCurvature(l => {
       if (l.type === 'CALLS') return 0.15;
@@ -404,9 +425,12 @@ function initGraph() {
     })
     .linkCurveRotation(l => l.type === 'IMPORTS' ? Math.PI * 0.5 : 0)
     .linkDirectionalArrowLength(l => {
-      if (!selectedId) return 0; // hide arrows when nothing selected — big perf win
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (hoveredId) {
+        return (sid === hoveredId || tid === hoveredId) ? 2.5 : 0;
+      }
+      if (!selectedId) return 0; // hide arrows when nothing selected — big perf win
       return (sid === selectedId || tid === selectedId) ? 3 : 0;
     })
     .linkDirectionalArrowRelPos(1)
@@ -432,6 +456,7 @@ function initGraph() {
       return EDGE_COLORS[l.type] || '#89b4fa';
     })
     .onNodeClick(n => { if (n) selectNode(n.id); })
+    .onNodeHover(n => { hoveredId = n ? n.id : null; })
     .onBackgroundClick(() => { deselectNode(); clearChangeHighlight(); })
     .warmupTicks(80)
     .cooldownTicks(120)

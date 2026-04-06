@@ -13,8 +13,8 @@
 
 ## Alpha
 - **Status**: in_progress
-- **Task**: P0-2 Backend — Add fan-in/fan-out connectivity data to build_graph_data()
-- **Branch**: feat/alpha-fan-connectivity
+- **Task**: P0-1 Hover-to-Show Edges + P0-2 Connectivity-Based Node Sizing (Frontend)
+- **Branch**: feat/beta-2d-label-collision
 
 ## Alpha (prev)
 - **Status**: done
