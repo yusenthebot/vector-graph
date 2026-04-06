@@ -11,12 +11,15 @@
 | Command palette (Ctrl+K, /) | Alpha | done |
 | Stacked accordions (replace tabs) | Beta | done |
 
-### v0.9.1 Visual Wins In Progress
+### v0.9.1 In Progress
 
 | Feature | Agent | Status |
 |---------|-------|--------|
 | F2: Default CALLS arrows | Alpha | done |
 | F3: Nebula label improvements | Alpha | done |
 | F6: Edge dash patterns | Alpha | done |
+| F4: Legend panel | Beta | merged |
+| F7: Minimap overlay | Beta | merged |
 
 **Alpha**: feat/alpha-visual-wins complete — 4 new tests, 809 total passing
+**Beta**: feat/beta-legend-minimap merged into main — legend + minimap integrated

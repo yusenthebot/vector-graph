@@ -1194,3 +1194,35 @@ class TestVisualWins:
         """Edge dash patterns differentiate IMPORTS from CALLS."""
         from vector_graph.api.web_server import _HTML
         assert 'linkLineDash' in _HTML or 'lineDash' in _HTML
+
+
+# ---------------------------------------------------------------------------
+# Legend panel + minimap (v0.9.1)
+# ---------------------------------------------------------------------------
+
+class TestLegendAndMinimap:
+    """Legend panel + minimap (v0.9.1)."""
+
+    def test_html_legend_element(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="legend"' in _HTML
+
+    def test_js_build_legend(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function buildLegend()' in _HTML or 'buildLegend' in _HTML
+
+    def test_css_legend_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#legend' in _HTML
+
+    def test_html_minimap_canvas(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="minimap"' in _HTML
+
+    def test_js_update_minimap(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'updateMinimap' in _HTML
+
+    def test_css_minimap_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#minimap' in _HTML

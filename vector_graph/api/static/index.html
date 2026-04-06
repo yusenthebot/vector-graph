@@ -37,6 +37,11 @@
     </div>
     <div class="resize-handle" id="sidebar-resize" title="Drag to resize sidebar"></div>
     <div id="graph-container">
+      <canvas id="minimap" width="120" height="150"></canvas>
+      <div id="legend">
+        <div id="legend-header" onclick="document.getElementById('legend').classList.toggle('expanded')">Legend</div>
+        <div id="legend-body"></div>
+      </div>
     </div>
     <div class="resize-handle" id="inspector-resize" title="Drag to resize inspector panel"></div>
     <aside id="inspector">

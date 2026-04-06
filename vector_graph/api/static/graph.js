@@ -242,6 +242,7 @@ async function loadData() {
   buildFilters();
   buildExplorer();
   buildGroupsPanel();
+  buildLegend();
   updateChangesPanel();
   updateStatusBar();
 }
@@ -304,6 +305,7 @@ function switchMode(mode) {
   buildFilters();
   buildExplorer();
   buildGroupsPanel();
+  buildLegend();
   updateChangesPanel();
   updateStatusBar();
 }
@@ -2831,6 +2833,117 @@ if (sidebarCollapsed) {
   document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('sidebar-resize').classList.add('hidden');
 }
+
+// ── Legend ──────────────────────────────────────────────────
+function buildLegend() {
+  var body = document.getElementById('legend-body');
+  if (!body) return;
+  // Shape unicode icons per type
+  var shapes = {
+    File:'\u2B21', Class:'\u25A0', Function:'\u25CF', Method:'\u25C6',
+    Variable:'\u25B2', Decorator:'\u25CB', Module:'\u2B22',
+    ROS2Node:'\u2B53', Topic:'\u25BC', Service:'\u25AF', Action:'\u2B24', Parameter:'\u2022'
+  };
+  // Only show types present in current data
+  var visibleTypes = new Set(allNodes.map(function(n) { return n.label; }));
+  var html = '';
+  Object.keys(COLORS).forEach(function(type) {
+    if (!visibleTypes.has(type)) return;
+    var shape = shapes[type] || '\u25CF';
+    html += '<div class="legend-row">';
+    html += '<span class="legend-dot" style="background:' + COLORS[type] + '"></span>';
+    html += '<span class="legend-shape">' + shape + '</span>';
+    html += '<span>' + type + '</span>';
+    html += '</div>';
+  });
+  body.innerHTML = html;
+}
+
+// ── Minimap ─────────────────────────────────────────────────
+var _minimapLast = 0;
+function updateMinimap() {
+  var now = performance.now();
+  if (now - _minimapLast < 200) return; // 5fps throttle
+  _minimapLast = now;
+  var canvas = document.getElementById('minimap');
+  if (!canvas || !graph3d) return;
+  var ctx = canvas.getContext('2d');
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  var nodes = graph3d.graphData().nodes;
+  if (!nodes.length) return;
+
+  // Compute bounding box (XZ plane)
+  var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  nodes.forEach(function(n) {
+    if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+    if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
+  });
+  var rangeX = (maxX - minX) || 1, rangeZ = (maxZ - minZ) || 1;
+  var pad = 10;
+
+  // Draw nodes as dots
+  nodes.forEach(function(n) {
+    var px = pad + (n.x - minX) / rangeX * (w - pad * 2);
+    var py = pad + (n.z - minZ) / rangeZ * (h - pad * 2);
+    ctx.fillStyle = GROUP_COLORS[n.group] || COLORS[n.label] || '#585b70';
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.arc(px, py, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Draw viewport rectangle approximation
+  try {
+    var cam = graph3d.camera();
+    var cx = pad + (cam.position.x - minX) / rangeX * (w - pad * 2);
+    var cz = pad + (cam.position.z - minZ) / rangeZ * (h - pad * 2);
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = '#cdd6f4';
+    ctx.lineWidth = 1;
+    var dist = Math.sqrt(cam.position.x * cam.position.x + cam.position.y * cam.position.y + cam.position.z * cam.position.z) || 200;
+    var vSize = Math.min(Math.max(dist * 0.1, 10), 40);
+    ctx.strokeRect(cx - vSize / 2, cz - vSize / 2, vSize, vSize);
+  } catch (e) {}
+  ctx.globalAlpha = 1;
+}
+
+// Minimap click — fly camera to world position
+document.addEventListener('DOMContentLoaded', function() {
+  var canvas = document.getElementById('minimap');
+  if (!canvas) return;
+  canvas.addEventListener('click', function(e) {
+    if (!graph3d) return;
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    var w = canvas.width, h = canvas.height, pad = 10;
+
+    var nodes = graph3d.graphData().nodes;
+    if (!nodes.length) return;
+    var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    nodes.forEach(function(n) {
+      if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+      if (n.z < minZ) minZ = n.z; if (n.z > maxZ) maxZ = n.z;
+    });
+    var rangeX = (maxX - minX) || 1, rangeZ = (maxZ - minZ) || 1;
+
+    var worldX = minX + (mx - pad) / (w - pad * 2) * rangeX;
+    var worldZ = minZ + (my - pad) / (h - pad * 2) * rangeZ;
+    var cam = graph3d.camera();
+    graph3d.cameraPosition(
+      {x: worldX + 80, y: cam.position.y, z: worldZ + 80},
+      {x: worldX, y: 0, z: worldZ},
+      1000
+    );
+  });
+});
+
+// Minimap render loop (throttled to 5fps via _minimapLast guard)
+(function minimapLoop() {
+  updateMinimap();
+  requestAnimationFrame(minimapLoop);
+})();
 
 // ── Start ───────────────────────────────────────────────────
 // Request notification permission on load
