@@ -12,8 +12,10 @@
   - tests/unit/test_web_api.py (TestResizablePanels: 2 tests)
 
 ## Alpha
-- **Status**: done
-- **Task**: Add visualization mode selector UI + keyboard shortcuts to frontend
+- **Status**: in_progress
+- **Task**: Feature 1 — Status Bar (replace helpbar + topbar + sidebar-stats)
+- **Branch**: feat/alpha-statusbar
+- **Plan**: TDD RED -> implement -> GREEN
 - **Branch**: feat/alpha-mode-selector-ui
 - **Result**: 11 new tests (TDD RED->GREEN), 69/69 in test_web_api.py, zero regressions
 - **Files modified**:

@@ -705,10 +705,10 @@ class TestModeSelectorUI:
         # The logic button must have both 'mode-btn active' and 'data-mode="logic"'
         assert 'class="mode-btn active" data-mode="logic"' in _HTML
 
-    def test_html_contains_topbar_stats_span(self):
-        """HTML contains the topbar-stats span for node/link counts."""
+    def test_html_contains_sb_stats_span(self):
+        """HTML contains the sb-stats span for node/link counts (status bar replaces topbar)."""
         from vector_graph.api.web_server import _HTML
-        assert 'id="topbar-stats"' in _HTML
+        assert 'id="sb-stats"' in _HTML
 
     def test_js_contains_current_mode_state(self):
         """JS declares currentMode state variable with localStorage fallback."""
@@ -735,12 +735,12 @@ class TestModeSelectorUI:
         # Triggered only when not in an input field
         assert "tagName !== 'INPUT'" in _HTML
 
-    def test_js_update_stats_writes_topbar_stats(self):
-        """updateStats() targets topbar-stats element, not topbar innerHTML."""
+    def test_js_update_status_bar_writes_sb_stats(self):
+        """updateStatusBar() targets sb-stats element (status bar replaces topbar)."""
         from vector_graph.api.web_server import _HTML
-        assert "'topbar-stats'" in _HTML
-        # Must NOT overwrite the whole topbar (no topbar.innerHTML assignment)
-        assert "getElementById('topbar').innerHTML" not in _HTML
+        assert "'sb-stats'" in _HTML
+        # Must NOT reference the removed topbar-stats element
+        assert "'topbar-stats'" not in _HTML
 
     def test_css_contains_mode_btn_styles(self):
         """CSS defines .mode-btn and .mode-btn.active rules."""
@@ -897,3 +897,50 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+# ---------------------------------------------------------------------------
+# Status bar (v0.9.0) — replaces helpbar + topbar + sidebar-stats
+# ---------------------------------------------------------------------------
+
+class TestStatusBar:
+    """Status bar replaces helpbar + topbar + sidebar-stats (v0.9.0)."""
+
+    def test_html_contains_statusbar(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="statusbar"' in _HTML
+
+    def test_html_contains_statusbar_sections(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="sb-mode"' in _HTML
+        assert 'id="sb-stats"' in _HTML
+        assert 'id="sb-hints"' in _HTML
+
+    def test_html_no_helpbar(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="helpbar"' not in _HTML
+
+    def test_html_no_topbar(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="topbar"' not in _HTML
+
+    def test_html_no_sidebar_stats(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="sidebar-stats"' not in _HTML
+
+    def test_html_main_row_wrapper(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="main-row"' in _HTML
+
+    def test_js_update_status_bar_function(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function updateStatusBar()' in _HTML
+
+    def test_js_statusbar_context_sensitive(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'sb-hints' in _HTML
+        assert 'sb-mode' in _HTML
+
+    def test_js_fps_counter(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'sb-fps' in _HTML
