@@ -244,7 +244,6 @@ async function loadData() {
   buildGroupsPanel();
   updateChangesPanel();
   updateStatusBar();
-  updateSectionCounts();
 }
 
 // ── Mode switching (instant — uses pre-cached data, no destroy/recreate) ──
@@ -307,7 +306,6 @@ function switchMode(mode) {
   buildGroupsPanel();
   updateChangesPanel();
   updateStatusBar();
-  updateSectionCounts();
 }
 
 // ── Graph init ──────────────────────────────────────────────
@@ -1078,32 +1076,14 @@ function focusGroup(groupName) {
   }
 }
 
-// ── Sidebar accordion sections ───────────────────────────────
-function toggleSection(name) {
-  var section = document.getElementById('section-' + name);
-  if (!section) return;
-  section.classList.toggle('open');
-  var openSections = [];
-  document.querySelectorAll('.sidebar-section.open').forEach(function(s) {
-    openSections.push(s.id.replace('section-', ''));
-  });
-  localStorage.setItem('vg-open-sections', JSON.stringify(openSections));
-}
-
-// Backward compatibility shim — any code still calling switchTab will open the section
+// ── Sidebar tabs ────────────────────────────────────────────
 function switchTab(tab) {
-  var section = document.getElementById('section-' + tab);
-  if (section) section.classList.add('open');
-}
-
-function updateSectionCounts() {
-  var ce = document.getElementById('count-explorer');
-  var cg = document.getElementById('count-groups');
-  var cf = document.getElementById('count-filters');
-  var cc = document.getElementById('count-changes');
-  if (ce) ce.textContent = allNodes.filter(function(n){return n.label==='File';}).length || '';
-  if (cg) cg.textContent = new Set(allNodes.map(function(n){return n.group;})).size || '';
-  if (cc && typeof changeHistory !== 'undefined') cc.textContent = changeHistory.length || '';
+  document.querySelectorAll('.sidebar-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.sidebar-panel').forEach(function(p) { p.classList.remove('active'); });
+  var tabEl = document.querySelector('.sidebar-tab[onclick*="' + tab + '"]');
+  var panelEl = document.getElementById('panel-' + tab);
+  if (tabEl) tabEl.classList.add('active');
+  if (panelEl) panelEl.classList.add('active');
 }
 
 // ── File tree (Explorer tab) ────────────────────────────────
@@ -2771,9 +2751,7 @@ function updateChangesPanel() {
   }
 
   el.innerHTML = html;
-  var cs = document.getElementById('section-changes');
-  if (cs) cs.classList.add('open');
-  updateSectionCounts();
+  switchTab('changes');
 }
 
 function focusChange(changeIndex) {
@@ -2840,19 +2818,6 @@ if (sidebarCollapsed) {
   document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('sidebar-resize').classList.add('hidden');
 }
-
-// Restore accordion open/closed state from localStorage
-(function() {
-  var saved = localStorage.getItem('vg-open-sections');
-  if (saved) {
-    try {
-      var open = JSON.parse(saved);
-      document.querySelectorAll('.sidebar-section').forEach(function(s) {
-        s.classList.toggle('open', open.indexOf(s.id.replace('section-','')) >= 0);
-      });
-    } catch(e) {}
-  }
-})();
 
 // ── Start ───────────────────────────────────────────────────
 // Request notification permission on load

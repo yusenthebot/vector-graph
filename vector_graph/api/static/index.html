@@ -24,24 +24,16 @@
           <div id="search-results"></div>
         </div>
       </div>
-      <div id="sidebar-sections">
-        <div class="sidebar-section open" id="section-explorer">
-          <div class="section-header" onclick="toggleSection('explorer')" title="File tree — browse files and symbols in the project"><span class="section-arrow">&#9654;</span><span class="section-title">Explorer</span><span class="section-count" id="count-explorer"></span></div>
-          <div class="section-body" id="panel-explorer"></div>
-        </div>
-        <div class="sidebar-section open" id="section-groups">
-          <div class="section-header" onclick="toggleSection('groups')" title="Nebula groups — click a group to focus the camera on that cluster"><span class="section-arrow">&#9654;</span><span class="section-title">Groups</span><span class="section-count" id="count-groups"></span></div>
-          <div class="section-body" id="panel-groups"></div>
-        </div>
-        <div class="sidebar-section" id="section-filters">
-          <div class="section-header" onclick="toggleSection('filters')" title="Toggle node types and edge types on/off, switch health color mode"><span class="section-arrow">&#9654;</span><span class="section-title">Filters</span><span class="section-count" id="count-filters"></span></div>
-          <div class="section-body" id="panel-filters"></div>
-        </div>
-        <div class="sidebar-section" id="section-changes">
-          <div class="section-header" onclick="toggleSection('changes')" title="Live change feed — shows file modifications detected by the watcher in real-time"><span class="section-arrow">&#9654;</span><span class="section-title">Changes</span><span class="section-count" id="count-changes"></span></div>
-          <div class="section-body" id="panel-changes"></div>
-        </div>
+      <div class="sidebar-tabs">
+        <div class="sidebar-tab active" onclick="switchTab('explorer')" title="File tree — browse files and symbols in the project">Explorer</div>
+        <div class="sidebar-tab" onclick="switchTab('groups')" title="Nebula groups — click a group to focus the camera on that cluster">Groups</div>
+        <div class="sidebar-tab" onclick="switchTab('filters')" title="Toggle node types and edge types on/off, switch health color mode">Filters</div>
+        <div class="sidebar-tab" onclick="switchTab('changes')" title="Live change feed — shows file modifications detected by the watcher in real-time">Changes</div>
       </div>
+      <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
+      <div id="panel-groups" class="sidebar-panel" style="padding:6px 12px"></div>
+      <div id="panel-filters" class="sidebar-panel" style="padding:6px 12px"></div>
+      <div id="panel-changes" class="sidebar-panel" style="padding:6px 8px"></div>
     </div>
     <div class="resize-handle" id="sidebar-resize" title="Drag to resize sidebar"></div>
     <div id="graph-container">

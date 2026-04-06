@@ -57,29 +57,38 @@ Two interfaces, one brain:
 
 ---
 
-## Next: v0.8.0 -- Intuitive Visualization
+### v0.8.0 -- Intuitive Visualization
+- Hover-to-show edges: edges hidden by default, appear on node hover/selection
+- Connectivity-based node sizing (fan-in + fan-out logarithmic scale)
+- Fan-in/fan-out data in graph API
+- 2D impact graph: conditional labels (hover-only when >15 nodes)
+- 778 tests, 86% coverage
 
-See `docs/TODO-visualization.md` for full details.
+### v0.9.0 -- Terminal Cockpit
+- Full-width status bar (replaces helpbar/topbar/sidebar-stats) with mode badge, stats, context-sensitive shortcuts, FPS counter
+- Panel collapse: Ctrl+B toggle sidebar, Ctrl+I toggle inspector
+- Command palette overlay: Ctrl+K or / for fuzzy search across nodes, files, commands
+- Sidebar tabs replaced with stacked accordion sections (all visible at once, multiple expandable)
+- 810 tests, 86% coverage
+
+---
+
+## Next: v1.0.0 -- Scale + Polish
 
 Priority items:
-- Edges visible only on hover/selection (not all the time)
-- Node size = importance (connectivity-based)
 - Containment visualization (class -> methods boundary)
 - Edge bundling for cross-group connections
 - Minimap for spatial context
+- Level of Detail / InstancedMesh for 10K nodes
+- Zen mode (full-screen graph with floating panels)
+- Theme switching (Catppuccin Mocha/Macchiato, Dracula, Tokyo Night)
+- PyPI release: `pip install vector-graph`
 
 ---
 
 ## Future
 
-### v0.9.0 -- Scale + Performance
-- Level of Detail: zoom -> groups collapse/expand
-- WebGL InstancedMesh (10K nodes, 60fps)
-- Edge bundling conduits
-- Lazy loading
-- PyPI release: `pip install vector-graph`
-
-### v1.0.0 -- Multi-Language
+### v1.1.0 -- Multi-Language
 - C++ support via tree-sitter
 - Cross-language bridge (Python launch -> C++ node resolution)
 - Mixed graph visualization
