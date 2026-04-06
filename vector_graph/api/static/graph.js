@@ -31,7 +31,9 @@ const GROUPS = {
 // ── State ───────────────────────────────────────────────────
 let allNodes = [], allLinks = [];
 let enabledLabels = new Set(Object.keys(COLORS));
-let enabledEdges = new Set(Object.keys(EDGE_COLORS));
+// Hide structural edges by default — they clutter the graph without showing code flow
+const _STRUCTURAL_EDGES = new Set(['CONTAINS','HAS_METHOD','DEFINES','HAS_PROPERTY']);
+let enabledEdges = new Set(Object.keys(EDGE_COLORS).filter(e => !_STRUCTURAL_EDGES.has(e)));
 let selectedId = null;
 let highlightNodes = new Set();
 let highlightLinks = new Set();
@@ -288,12 +290,14 @@ function initGraph() {
         if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
         return '#08080e';
       }
-      // Change highlight — show impact chain edges
+      // Change highlight — only bright for edges directly touching a changed node
       if (changeHighlightActive) {
-        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
-        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
-        if (srcHit && tgtHit) return '#fab387'; // orange impact chain
-        if (activeChangeIds.has(sid) || activeChangeIds.has(tid)) return '#f9e2af55'; // faint for partial
+        const srcChanged = activeChangeIds.has(sid);
+        const tgtChanged = activeChangeIds.has(tid);
+        // Direct edges from/to changed nodes: bright
+        if (srcChanged || tgtChanged) return '#fab387';
+        // Impact chain edges (both ends in impact set): faint
+        if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return '#fab38733';
         return '#08080e00'; // invisible
       }
       return EDGE_COLORS[l.type] || '#45475a';
@@ -305,12 +309,18 @@ function initGraph() {
         return (sid === selectedId || tid === selectedId) ? 0.9 : 0.0;
       }
       if (changeHighlightActive) {
-        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
-        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
-        if (srcHit && tgtHit) return 0.8;
+        const srcChanged = activeChangeIds.has(sid);
+        const tgtChanged = activeChangeIds.has(tid);
+        // Direct: bright. Impact chain: subtle. Rest: hidden
+        if (srcChanged || tgtChanged) return 0.7;
+        if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.1;
         return 0.0;
       }
-      return 0.1;
+      // Default: edges barely visible — graph shows structure via node positions
+      // CALLS slightly more visible than others
+      if (l.type === 'CALLS') return 0.04;
+      if (l.type === 'IMPORTS') return 0.03;
+      return 0.02;
     })
     .linkWidth(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
@@ -319,12 +329,16 @@ function initGraph() {
         return (sid === selectedId || tid === selectedId) ? 2.0 : 0.0;
       }
       if (changeHighlightActive) {
-        const srcHit = activeChangeIds.has(sid) || activeImpactIds.has(sid);
-        const tgtHit = activeChangeIds.has(tid) || activeImpactIds.has(tid);
-        if (srcHit && tgtHit) return 2.5;
+        const srcChanged = activeChangeIds.has(sid);
+        const tgtChanged = activeChangeIds.has(tid);
+        if (srcChanged || tgtChanged) return 2.0;
+        if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.3;
         return 0.0;
       }
-      return 0.15;
+      // CALLS thicker than structural edges
+      if (l.type === 'CALLS') return 0.3;
+      if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.2;
+      return 0.1;
     })
     .linkCurvature(l => {
       if (l.type === 'CALLS') return 0.15;

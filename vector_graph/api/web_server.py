@@ -495,6 +495,15 @@ def serve(
 
             if path == "/" or path == "/index.html":
                 self._respond(200, "text/html", html_bytes)
+            elif path == "/api/logo":
+                logo_path = Path(root_resolved) / "logo.png"
+                if not logo_path.exists():
+                    # Fallback: look next to package
+                    logo_path = Path(__file__).parent.parent.parent / "logo.png"
+                if logo_path.exists():
+                    self._respond(200, "image/png", logo_path.read_bytes())
+                else:
+                    self.send_error(404)
             elif path == "/api/data":
                 req_mode = params.get("mode", "logic")
                 if req_mode not in _MODE_LABELS:
