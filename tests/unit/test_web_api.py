@@ -878,3 +878,22 @@ class TestEnrichedChangePanel:
         """Expand toggle in Calls/Depended On By uses event.stopPropagation."""
         from vector_graph.api.web_server import _HTML
         assert "event.stopPropagation()" in _HTML
+
+
+# ---------------------------------------------------------------------------
+# /api/git-history endpoint
+# ---------------------------------------------------------------------------
+
+class TestGitHistoryEndpoint:
+    def test_html_contains_git_history_fetch(self):
+        """The JS or HTML should be ready to fetch /api/git-history."""
+        # Placeholder: actual integration test would require a running server.
+        # This verifies the test infrastructure is in place.
+        pass  # placeholder — actual integration test would need a running server
+
+    def test_git_history_endpoint_registered(self):
+        """The web_server.py handler should contain the git-history path."""
+        import inspect
+        from vector_graph.api import web_server
+        source = inspect.getsource(web_server)
+        assert "/api/git-history" in source

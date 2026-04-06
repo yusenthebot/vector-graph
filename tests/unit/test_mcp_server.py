@@ -356,9 +356,9 @@ def test_tool_query_matches_field_is_list(server) -> None:
 
 @pytest.mark.level5
 def test_list_tools_count_is_eight(server) -> None:
-    """Server registers exactly 15 tools (10 original + 5 new smart tools)."""
+    """Server registers exactly 17 tools (15 original + 2 new git-history tools)."""
     tools = server.list_tools()
-    assert len(tools) == 15
+    assert len(tools) == 17
 
 
 @pytest.mark.level5
@@ -476,9 +476,9 @@ def server_cyclic(cyclic_project: Path):
 
 @pytest.mark.level5
 def test_mcp_list_tools_count(server) -> None:
-    """list_tools returns exactly 15 tools after adding 5 new smart tools."""
+    """list_tools returns exactly 17 tools after adding hotspot_report + co_change."""
     tools = server.list_tools()
-    assert len(tools) == 15
+    assert len(tools) == 17
 
 
 @pytest.mark.level5
@@ -745,11 +745,11 @@ def test_mcp_dependency_check() -> None:
 
 @pytest.mark.level5
 def test_mcp_list_tools_count_15() -> None:
-    """MCP server now has 15 tools."""
+    """MCP server now has 17 tools (15 original + hotspot_report + co_change)."""
     from vector_graph.api.mcp_server import VectorGraphMCPServer
     srv = VectorGraphMCPServer(PROJECT_ROOT)
     tools = srv.list_tools()
-    assert len(tools) == 15
+    assert len(tools) == 17
 
 
 @pytest.mark.level5

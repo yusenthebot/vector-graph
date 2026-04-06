@@ -43,6 +43,7 @@ let linkIndex = {from: {}, to: {}}; // pre-built for O(1) lookups
 let GROUP_COLORS = {}; // populated in loadData after nodes arrive
 let nebulaGroup = null;
 let healthMode = false; // OFF by default — show per-type label colors
+let hotspotMode = false; // OFF by default — git change frequency heatmap
 
 let currentMode = localStorage.getItem('vg-mode') || 'logic';
 let sessionChangeCount = {};  // symbol name -> change count this session
@@ -92,6 +93,14 @@ function getNodeColor(n) {
     if (heat >= 4) return '#f38ba8';
     if (heat >= 2) return '#fab387';
   }
+  // 3b. Hotspot gradient (opt-in toggle — change frequency heatmap)
+  if (hotspotMode && n.hotspotScore !== undefined) {
+    const s = n.hotspotScore;
+    if (s >= 0.8) return '#f38ba8';   // hot red — very volatile
+    if (s >= 0.5) return '#fab387';   // orange — moderately volatile
+    if (s >= 0.2) return '#f9e2af';   // yellow — some changes
+    return '#89b4fa';                  // cool blue — stable
+  }
   // 4. Health gradient (opt-in toggle)
   if (healthMode && n.healthRisk) {
     if (n.healthRisk === 'CRITICAL') return '#f38ba8';
@@ -135,6 +144,11 @@ let activeImpactIds = new Set();    // impact chain nodes (depth 1-2 callers)
 let cumulativeHeat = {};            // nodeId -> change count this session
 let changeHighlightActive = false;  // true when showing change overlay
 
+// ── Change grouping state (5-second debounce window) ──
+let changeGroupBuffer = [];       // buffered change events
+let changeGroupTimer = null;      // debounce timer
+const CHANGE_GROUP_WINDOW = 5000; // 5 seconds
+
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
   // Pre-cache all 3 modes in parallel for instant switching
@@ -144,6 +158,33 @@ async function loadData() {
     fetch('/api/data?mode=deep').then(r => r.json()),
   ]);
   modeCache = {architecture: archR, logic: logicR, deep: deepR};
+
+  // Fetch git history data (non-blocking — augments nodes after load)
+  let gitData = null;
+  fetch('/api/git-history').then(r => r.json()).then(d => {
+    gitData = d;
+    // Enrich nodes in all cached modes with hotspot data
+    if (gitData && gitData.hotspots) {
+      const hotspotMap = {};
+      gitData.hotspots.forEach(h => { hotspotMap[h.file] = h; });
+      Object.values(modeCache).forEach(modeData => {
+        modeData.nodes.forEach(n => {
+          // Match by relative file path (node.file may be absolute)
+          const relFile = n.file ? n.file.split('/').slice(-2).join('/') : '';
+          const fullFile = n.file || '';
+          const hs = hotspotMap[relFile] || hotspotMap[fullFile] ||
+                     Object.values(hotspotMap).find(h => fullFile.endsWith(h.file));
+          if (hs) {
+            n.hotspotScore = hs.score;
+            n.hotspotChanges = hs.changes;
+            n.hotspotRecent = hs.recent;
+            n.hotspotContributors = hs.contributors;
+            n.hotspotLastModified = hs.last_modified;
+          }
+        });
+      });
+    }
+  }).catch(() => {});
 
   const d = modeCache[currentMode];
   allNodes = d.nodes;
@@ -273,6 +314,15 @@ function initGraph() {
         const riskColor = n.healthRisk === 'CRITICAL' ? '#f38ba8' : n.healthRisk === 'HIGH' ? '#fab387' : n.healthRisk === 'MEDIUM' ? '#f9e2af' : '#a6e3a1';
         t += '<br><span style="color:' + riskColor + '">&#9632; cc=' + n.complexity + ' ' + (n.healthRisk||'') + '</span>';
         if (n.lineCount) t += ' <span style="color:#585b70">' + n.lineCount + ' lines</span>';
+      }
+      // Git hotspot info
+      if (n.hotspotScore !== undefined) {
+        const hsColor = n.hotspotScore >= 0.8 ? '#f38ba8' : n.hotspotScore >= 0.5 ? '#fab387' : n.hotspotScore >= 0.2 ? '#f9e2af' : '#89b4fa';
+        t += '<br><span style="color:' + hsColor + '">&#9632; ' + n.hotspotChanges + ' changes (90d)</span>';
+        if (n.hotspotRecent) t += ' <span style="color:#585b70">' + n.hotspotRecent + ' recent</span>';
+        if (n.hotspotContributors && n.hotspotContributors.length) {
+          t += '<br><span style="color:#585b70">by ' + n.hotspotContributors.slice(0,2).join(', ') + '</span>';
+        }
       }
       // Show connections summary (use pre-built index)
       const inCount = linkIndex.to[n.id] ? linkIndex.to[n.id].length : 0;
@@ -1121,6 +1171,21 @@ function buildFilters() {
     </div>
   </div>`;
 
+  // Hotspot mode toggle
+  html += `<div class="filter-group"><h3>Git Hotspots</h3>
+    <div class="ftoggle" id="hotspot-toggle" onclick="toggleHotspotMode()" style="cursor:pointer" title="Color nodes by git change frequency — blue (stable) to red (volatile). Requires git repository.">
+      <span class="fdot" style="background:var(--peach)"></span>
+      <span id="hotspot-toggle-label">Off</span>
+      <span class="fcount" style="font-size:9px">click to toggle</span>
+    </div>
+    <div style="font-size:10px;color:var(--overlay0);margin-top:4px" title="Based on git log change frequency × code complexity over last 90 days">
+      <span style="color:#89b4fa">&#9679;</span> Stable &nbsp;
+      <span style="color:#f9e2af">&#9679;</span> Some &nbsp;
+      <span style="color:#fab387">&#9679;</span> Volatile &nbsp;
+      <span style="color:#f38ba8">&#9679;</span> Hot
+    </div>
+  </div>`;
+
   // Shape legend
   html += `<div class="filter-group"><h3>Node Shapes</h3><div class="shape-legend">
     <div class="shape-legend-item"><span class="shape-legend-icon">&#11044;</span> Function (sphere)</div>
@@ -1138,10 +1203,29 @@ function buildFilters() {
 
 function toggleHealthMode() {
   healthMode = !healthMode;
+  if (healthMode) hotspotMode = false;
+  // update hotspot toggle UI
+  const hsLabel = document.getElementById('hotspot-toggle-label');
+  if (hsLabel) hsLabel.textContent = hotspotMode ? 'On' : 'Off';
+  const hsDot = document.querySelector('#hotspot-toggle .fdot');
+  if (hsDot) hsDot.style.background = hotspotMode ? '#f38ba8' : 'var(--peach)';
   const label = document.getElementById('health-toggle-label');
   if (label) label.textContent = healthMode ? 'Health gradient' : 'Label colors';
   const dot = document.querySelector('#health-toggle .fdot');
   if (dot) dot.style.background = healthMode ? '#f38ba8' : 'var(--green)';
+  refreshNodeAppearance();
+}
+
+function toggleHotspotMode() {
+  hotspotMode = !hotspotMode;
+  if (hotspotMode) healthMode = false; // mutually exclusive
+  const label = document.getElementById('hotspot-toggle-label');
+  if (label) label.textContent = hotspotMode ? 'On' : 'Off';
+  const dot = document.querySelector('#hotspot-toggle .fdot');
+  if (dot) dot.style.background = hotspotMode ? '#f38ba8' : 'var(--peach)';
+  // Also update health toggle state
+  const hLabel = document.getElementById('health-toggle-label');
+  if (hLabel) hLabel.textContent = healthMode ? 'Health gradient' : 'Label colors';
   refreshNodeAppearance();
 }
 
@@ -1231,7 +1315,7 @@ function initSSE() {
       const change = JSON.parse(e.data);
       changeHistory.unshift(change);
       if (changeHistory.length > MAX_CHANGE_HISTORY) changeHistory.pop();
-      handleChangeEvent(change);
+      bufferChangeEvent(change);
       updateChangesPanel();
     } catch(err) {
       console.error('SSE parse error:', err);
@@ -1246,6 +1330,79 @@ function initSSE() {
 
 // Start SSE after graph loads
 setTimeout(initSSE, 1000);
+
+// ── Change grouping — 5-second debounce window ──────────────
+function bufferChangeEvent(change) {
+  changeGroupBuffer.push(change);
+
+  // Reset the timer — wait for more events in the window
+  if (changeGroupTimer) clearTimeout(changeGroupTimer);
+  changeGroupTimer = setTimeout(() => {
+    flushChangeGroup();
+  }, CHANGE_GROUP_WINDOW);
+
+  // Also immediately process the FIRST event for instant feedback
+  if (changeGroupBuffer.length === 1) {
+    handleChangeEvent(change);
+  }
+}
+
+function flushChangeGroup() {
+  changeGroupTimer = null;
+  if (changeGroupBuffer.length <= 1) {
+    // Single event already processed
+    changeGroupBuffer = [];
+    return;
+  }
+
+  // Multiple events — re-trigger handleChangeEvent with the LAST event
+  // (which will show the session summary in the impact panel)
+  const lastEvent = changeGroupBuffer[changeGroupBuffer.length - 1];
+  changeGroupBuffer = [];
+  handleChangeEvent(lastEvent);
+}
+
+// ── Ripple animation ─────────────────────────────────────────
+function triggerRipple(cx, cy, cz) {
+  if (!graph3d || typeof THREE === 'undefined') return;
+  const scene = graph3d.scene();
+  if (!scene) return;
+
+  // Create expanding ring
+  const geo = new THREE.RingGeometry(1, 3, 64);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xf9e2af,  // warm yellow
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.position.set(cx, cy, cz);
+  // Face the camera
+  ring.lookAt(graph3d.camera().position);
+  scene.add(ring);
+
+  const startTime = Date.now();
+  const duration = 2000; // 2 seconds
+  const maxScale = 120;
+
+  function animateRipple() {
+    const elapsed = Date.now() - startTime;
+    const t = elapsed / duration;
+    if (t >= 1) {
+      scene.remove(ring);
+      geo.dispose();
+      mat.dispose();
+      return;
+    }
+    const scale = t * maxScale;
+    ring.scale.set(scale, scale, scale);
+    ring.material.opacity = 0.5 * (1 - t * t); // quadratic fade
+    ring.lookAt(graph3d.camera().position); // keep facing camera
+    requestAnimationFrame(animateRipple);
+  }
+  requestAnimationFrame(animateRipple);
+}
 
 function handleChangeEvent(change) {
   if (!graph3d) return;
@@ -1353,6 +1510,7 @@ function handleChangeEvent(change) {
         {x: cx, y: cy, z: cz},
         1200
       );
+      triggerRipple(cx, cy, cz);
     }
   }
 
@@ -1383,6 +1541,18 @@ function handleChangeEvent(change) {
 
   // 8. Open impact tree panel (in inspector area)
   showImpactPanel(change);
+
+  // 9. Browser notification for high-risk changes
+  if (change.impact && (change.impact.risk === 'HIGH' || change.impact.risk === 'CRITICAL')) {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      const file = (change.file || '').split('/').pop();
+      new Notification('vector-graph', {
+        body: change.impact.risk + ' risk change in ' + file + ' — ' + activeChangeIds.size + ' nodes affected',
+        icon: '/api/logo',
+        tag: 'vg-change', // replace previous notification
+      });
+    }
+  }
 }
 
 function toggleDiff(id, toggle) {
@@ -2071,4 +2241,8 @@ function initResize() {
 initResize();
 
 // ── Start ───────────────────────────────────────────────────
+// Request notification permission on load
+if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 loadData();

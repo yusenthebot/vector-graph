@@ -348,6 +348,51 @@ class VectorGraphMCPServer:
                     "required": ["module"],
                 },
             },
+            {
+                "name": "hotspot_report",
+                "description": (
+                    "Report git change hotspots for the project. "
+                    "If file_path is given, returns hotspot data for that specific file. "
+                    "Otherwise returns the top 10 hotspots sorted by score."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Optional relative or absolute file path to query",
+                        },
+                        "days": {
+                            "type": "integer",
+                            "description": "Number of days of git history to analyse (default: 90)",
+                            "default": 90,
+                        },
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "name": "co_change",
+                "description": (
+                    "Return files that commonly change together with the given file, "
+                    "sorted by co-change count."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Relative or absolute path of the file to query",
+                        },
+                        "days": {
+                            "type": "integer",
+                            "description": "Number of days of git history to analyse (default: 90)",
+                            "default": 90,
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -396,6 +441,8 @@ class VectorGraphMCPServer:
             "what_changed": self._tool_what_changed,
             "suggest_tests": self._tool_suggest_tests,
             "dependency_check": self._tool_dependency_check,
+            "hotspot_report": self._tool_hotspot_report,
+            "co_change": self._tool_co_change,
         }
         if name not in _dispatch:
             return {"error": f"Unknown tool: '{name}'"}
@@ -758,6 +805,100 @@ class VectorGraphMCPServer:
                     "length": c.length,
                 }
                 for c in existing_cycles[:5]
+            ],
+        }
+
+    def _tool_hotspot_report(
+        self, file_path: str = "", days: int = 90
+    ) -> dict[str, Any]:
+        """Return hotspot data for a specific file or the top 10 hotspots."""
+        try:
+            from vector_graph.analysis.git_history import (
+                analyze_hotspots,
+            )
+        except ImportError:
+            return {"error": "git_history module not available", "hotspots": []}
+
+        root = str(self._graph_api._root)
+        hotspots = analyze_hotspots(root, days=days)
+
+        if file_path:
+            # Resolve to absolute so it can match keys in hotspots dict
+            from pathlib import Path as _Path
+            candidate = _Path(file_path)
+            if not candidate.is_absolute():
+                candidate = _Path(root) / candidate
+            resolved = str(candidate.resolve())
+            entry = hotspots.get(resolved) or hotspots.get(file_path)
+            if entry is None:
+                return {"file_path": file_path, "found": False, "hotspots": []}
+            return {
+                "file_path": file_path,
+                "found": True,
+                "hotspots": [
+                    {
+                        "file": entry.file_path,
+                        "changes": entry.change_count,
+                        "recent": entry.recent_changes,
+                        "score": round(entry.hotspot_score, 2),
+                        "contributors": list(entry.top_contributors),
+                        "last_modified": entry.last_modified,
+                    }
+                ],
+            }
+
+        top10 = sorted(hotspots.values(), key=lambda h: h.hotspot_score, reverse=True)[:10]
+        return {
+            "hotspots": [
+                {
+                    "file": h.file_path,
+                    "changes": h.change_count,
+                    "recent": h.recent_changes,
+                    "score": round(h.hotspot_score, 2),
+                    "contributors": list(h.top_contributors),
+                    "last_modified": h.last_modified,
+                }
+                for h in top10
+            ],
+        }
+
+    def _tool_co_change(self, file_path: str = "", days: int = 90) -> dict[str, Any]:
+        """Return files that commonly change together with the given file."""
+        if not file_path:
+            return {"error": "file_path is required", "co_changes": []}
+
+        try:
+            from vector_graph.analysis.git_history import analyze_co_changes
+        except ImportError:
+            return {"error": "git_history module not available", "co_changes": []}
+
+        root = str(self._graph_api._root)
+        # Resolve to absolute path for consistent matching
+        from pathlib import Path as _Path
+        candidate = _Path(file_path)
+        if not candidate.is_absolute():
+            candidate = _Path(root) / candidate
+        resolved = str(candidate.resolve())
+
+        co_changes = analyze_co_changes(root, days=days)
+        # Filter entries that involve our file (either side)
+        related = [
+            e for e in co_changes
+            if e.file_a in (file_path, resolved) or e.file_b in (file_path, resolved)
+        ]
+        # Sort by co_change_count descending
+        related.sort(key=lambda e: e.co_change_count, reverse=True)
+
+        return {
+            "file_path": file_path,
+            "co_changes": [
+                {
+                    "file_a": e.file_a,
+                    "file_b": e.file_b,
+                    "count": e.co_change_count,
+                    "confidence": e.confidence,
+                }
+                for e in related
             ],
         }
 

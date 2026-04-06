@@ -634,6 +634,46 @@ def serve(
                         }
                         for s in suggestions
                     ]})
+            elif path == "/api/git-history":
+                try:
+                    from vector_graph.analysis.git_history import (
+                        analyze_hotspots,
+                        analyze_co_changes,
+                        get_git_summary,
+                    )
+                    days = int(params.get("days", "90"))
+                    hotspots = analyze_hotspots(root_resolved, days=days)
+                    co_changes = analyze_co_changes(root_resolved, days=days)
+                    summary = get_git_summary(root_resolved, days=days)
+                    self._json({
+                        "hotspots": [
+                            {
+                                "file": h.file_path,
+                                "changes": h.change_count,
+                                "recent": h.recent_changes,
+                                "score": round(h.hotspot_score, 2),
+                                "contributors": list(h.top_contributors),
+                                "last_modified": h.last_modified,
+                            }
+                            for h in sorted(
+                                hotspots.values(),
+                                key=lambda h: h.hotspot_score,
+                                reverse=True,
+                            )
+                        ],
+                        "co_changes": [
+                            {
+                                "file_a": e.file_a,
+                                "file_b": e.file_b,
+                                "count": e.co_change_count,
+                                "confidence": e.confidence,
+                            }
+                            for e in co_changes
+                        ],
+                        "summary": summary,
+                    })
+                except ImportError:
+                    self._json({"error": "git_history module not available", "hotspots": [], "co_changes": [], "summary": {}})
             elif path == "/debug":
                 self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:
