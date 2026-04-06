@@ -2257,18 +2257,17 @@ function showImpactPanel(change) {
         if (n._calleeCount) tip += '\n' + n._calleeCount + ' callees';
         return tip;
       })
-      // Only show labels for expanded node and its neighbors, or if few nodes
+      // Always show labels on all nodes — truncate long names
       .nodeCanvasObjectMode(() => 'after')
       .nodeCanvasObject((n, ctx, globalScale) => {
-        // Show label only for: expanded node, its direct neighbors, or if total nodes <= 8
-        const showLabel = n._expanded || n._role !== 'changed' || subgraph.nodes.length <= 8;
-        if (!showLabel) return;
-        const fontSize = Math.max(9 / globalScale, 1.5);
+        const fontSize = Math.max(10 / globalScale, 2);
         ctx.font = fontSize + 'px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillStyle = n._expanded ? '#ffffff' : n._role === 'changed' ? '#f9e2afcc' : n._role === 'caller' ? '#fab387' : '#89b4fa';
-        ctx.fillText(n.name, n.x, n.y + 4);
+        ctx.fillStyle = n._expanded ? '#ffffff' : n._role === 'changed' ? '#f9e2af' : n._role === 'caller' ? '#fab387' : '#89b4fa';
+        let label = n.name;
+        if (label.length > 18) label = label.slice(0, 16) + '..';
+        ctx.fillText(label, n.x, n.y + 5);
       })
       .linkColor(l => l.type === 'CALLS' ? '#89b4fa44' : '#fab38744')
       .linkWidth(l => 1.5)
