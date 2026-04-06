@@ -77,15 +77,11 @@ function getNodeColor(n) {
     if (highlightNodes.has(n.id)) return GROUP_COLORS[n.group] || COLORS[n.label] || '#cdd6f4';
     return '#08080e';
   }
-  // 2. Change highlight — soft: changed nodes glow, rest keeps color but dimmed
+  // 2. Change highlight — spotlight: changed nodes glow, rest keeps NORMAL color
   if (changeHighlightActive) {
     if (activeChangeIds.has(n.id)) return '#f9e2af'; // bright yellow — directly changed
     if (activeImpactIds.has(n.id)) return '#fab387'; // warm orange — impact chain
-    const gc = GROUP_COLORS[n.group] || '#45475a';
-    if (gc.startsWith('hsl')) {
-      return gc.replace(/\d+%\)$/, '25%)');
-    }
-    return '#1a1a2e';
+    // SPOTLIGHT: fall through to normal rendering — spatial context preserved
   }
   // 3. Cumulative heat (session-level, always shown)
   const heat = cumulativeHeat[n.id] || 0;
@@ -115,12 +111,12 @@ function getNodeColor(n) {
 // ── Extracted node size logic ──
 function getNodeSize(n) {
   if (selectedId && n.id !== selectedId && !highlightNodes.has(n.id)) return 0.3;
-  if (changeHighlightActive) {
-    if (activeChangeIds.has(n.id)) return 8;
-    if (activeImpactIds.has(n.id)) return 5;
-    return SIZES[n.label] || 2;
-  }
   const base = SIZES[n.label] || 2;
+  if (changeHighlightActive) {
+    if (activeChangeIds.has(n.id)) return base * 1.8; // 1.8x — noticeable but not extreme
+    if (activeImpactIds.has(n.id)) return base * 1.3; // slight boost
+    // SPOTLIGHT: fall through to normal sizing
+  }
   if (n.complexity) return base + Math.min(n.complexity * 0.3, 5);
   return base;
 }
@@ -143,6 +139,7 @@ let activeChangeIds = new Set();    // nodes directly changed (persistent until 
 let activeImpactIds = new Set();    // impact chain nodes (depth 1-2 callers)
 let cumulativeHeat = {};            // nodeId -> change count this session
 let changeHighlightActive = false;  // true when showing change overlay
+let _changeGlowGroup = null;        // THREE.Group of pulsing glow spheres for changed nodes
 
 // ── Change grouping state (5-second debounce window) ──
 let changeGroupBuffer = [];       // buffered change events
@@ -340,15 +337,16 @@ function initGraph() {
         if (sid === selectedId || tid === selectedId) return EDGE_COLORS[l.type] || '#89b4fa';
         return '#08080e';
       }
-      // Change highlight — only bright for edges directly touching a changed node
+      // Change highlight — spotlight: direct edges bright, rest keep normal color
       if (changeHighlightActive) {
         const srcChanged = activeChangeIds.has(sid);
         const tgtChanged = activeChangeIds.has(tid);
         // Direct edges from/to changed nodes: bright
         if (srcChanged || tgtChanged) return '#fab387';
-        // Impact chain edges (both ends in impact set): faint
+        // Impact chain edges (both ends in impact set): faint amber
         if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return '#fab38733';
-        return '#08080e00'; // invisible
+        // SPOTLIGHT: all other edges keep their normal color
+        return EDGE_COLORS[l.type] || '#45475a';
       }
       return EDGE_COLORS[l.type] || '#45475a';
     })
@@ -361,10 +359,13 @@ function initGraph() {
       if (changeHighlightActive) {
         const srcChanged = activeChangeIds.has(sid);
         const tgtChanged = activeChangeIds.has(tid);
-        // Direct: bright. Impact chain: subtle. Rest: hidden
-        if (srcChanged || tgtChanged) return 0.7;
-        if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.1;
-        return 0.0;
+        // Direct: bright. Impact chain: subtle. Rest: normal opacity (spotlight mode)
+        if (srcChanged || tgtChanged) return 0.6;
+        if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.08;
+        // SPOTLIGHT: normal edge opacity — spatial context preserved
+        if (l.type === 'CALLS') return 0.04;
+        if (l.type === 'IMPORTS') return 0.03;
+        return 0.02;
       }
       // Default: edges barely visible — graph shows structure via node positions
       // CALLS slightly more visible than others
@@ -383,7 +384,10 @@ function initGraph() {
         const tgtChanged = activeChangeIds.has(tid);
         if (srcChanged || tgtChanged) return 2.0;
         if (activeImpactIds.has(sid) && activeImpactIds.has(tid)) return 0.3;
-        return 0.0;
+        // SPOTLIGHT: normal width — not zero
+        if (l.type === 'CALLS') return 0.3;
+        if (l.type === 'IMPORTS' || l.type === 'EXTENDS') return 0.2;
+        return 0.1;
       }
       // CALLS thicker than structural edges
       if (l.type === 'CALLS') return 0.3;
@@ -1522,6 +1526,9 @@ function handleChangeEvent(change) {
   graph3d.linkDirectionalParticles(graph3d.linkDirectionalParticles());
   graph3d.linkDirectionalParticleColor(graph3d.linkDirectionalParticleColor());
 
+  // 6b. Spotlight: add pulsing glow rings on changed nodes
+  addChangeGlowRings();
+
   // 7. Nebula: softly highlight affected group
   if (nebulaGroup) {
     const affectedGroups = new Set();
@@ -1721,6 +1728,156 @@ function setChangeView(mode) {
   if (window._lastChangeForPanel) showImpactPanel(window._lastChangeForPanel);
 }
 
+function generateChangeNarrative(change) {
+  const added = change.nodes_added || [];
+  const modified = change.nodes_modified || [];
+  const removed = change.nodes_removed || [];
+  const gData = graph3d ? graph3d.graphData() : {nodes:[]};
+
+  const parts = [];
+
+  // Pattern 1: New function added + caller now uses it
+  if (added.length > 0) {
+    const addedWithCallers = [];
+    added.forEach(name => {
+      const nd = gData.nodes.find(n => n.name === name && activeChangeIds.has(n.id));
+      if (!nd) return;
+      const callers = (linkIndex.to[nd.id] || [])
+        .map(l => typeof l.source === 'object' ? l.source : gData.nodes.find(n => n.id === l.source))
+        .filter(Boolean)
+        .filter(n => typeof n === 'object' && !activeChangeIds.has(n.id));
+      if (callers.length > 0) {
+        addedWithCallers.push({name, caller: callers[0].name || callers[0]});
+      }
+    });
+
+    if (addedWithCallers.length > 0) {
+      const first = addedWithCallers[0];
+      parts.push('Added ' + first.name + ' and integrated into ' + first.caller);
+      if (addedWithCallers.length > 1) parts[parts.length - 1] += ' (+' + (addedWithCallers.length - 1) + ' more)';
+    } else if (added.length <= 3) {
+      parts.push('Added ' + added.join(', '));
+    } else {
+      parts.push('Added ' + added.length + ' new functions');
+    }
+  }
+
+  // Pattern 2: Modified functions
+  if (modified.length > 0) {
+    if (modified.length <= 2) {
+      parts.push('Modified ' + modified.join(', '));
+    } else {
+      parts.push('Modified ' + modified.length + ' functions');
+    }
+  }
+
+  // Pattern 3: Removed functions
+  if (removed.length > 0) {
+    if (removed.length <= 2) {
+      parts.push('Removed ' + removed.join(', '));
+    } else {
+      parts.push('Removed ' + removed.length + ' functions');
+    }
+  }
+
+  if (parts.length === 0) return '';
+
+  let narrative = parts.join('. ') + '.';
+
+  // Add risk context if significant
+  if (change.impact && change.impact.risk !== 'LOW') {
+    narrative += ' (' + change.impact.risk + ' risk \u2014 ' + change.impact.affected_count + ' in blast radius)';
+  }
+
+  return narrative;
+}
+
+function buildSemanticGroups(history) {
+  // Step 1: Collect all changed functions with their files
+  const items = []; // {name, file, dir, type, changeIdx}
+  history.forEach((c, idx) => {
+    const file = (c.file || '').split('/').pop();
+    const dir = (c.file || '').split('/').slice(-2, -1)[0] || 'root';
+    (c.nodes_added || []).forEach(name => items.push({name, file, dir, type: 'added', changeIdx: idx}));
+    (c.nodes_modified || []).forEach(name => items.push({name, file, dir, type: 'modified', changeIdx: idx}));
+    (c.nodes_removed || []).forEach(name => items.push({name, file, dir, type: 'removed', changeIdx: idx}));
+  });
+
+  if (items.length === 0) return [];
+
+  // Step 2: Union-Find by connectivity
+  const parent = {};
+  items.forEach((item, i) => { parent[i] = i; });
+
+  function find(i) {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  }
+  function union(a, b) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  // Union items in same file
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (items[i].file === items[j].file) union(i, j);
+    }
+  }
+
+  // Union items connected by CALLS edges
+  const gData = graph3d ? graph3d.graphData() : {nodes:[]};
+  for (let i = 0; i < items.length; i++) {
+    const nd_i = gData.nodes.find(n => n.name === items[i].name);
+    if (!nd_i) continue;
+    for (let j = i + 1; j < items.length; j++) {
+      const nd_j = gData.nodes.find(n => n.name === items[j].name);
+      if (!nd_j) continue;
+      const iCallsJ = (linkIndex.from[nd_i.id] || []).some(l => {
+        const tid = typeof l.target === 'object' ? l.target.id : l.target;
+        return tid === nd_j.id;
+      });
+      const jCallsI = (linkIndex.from[nd_j.id] || []).some(l => {
+        const tid = typeof l.target === 'object' ? l.target.id : l.target;
+        return tid === nd_i.id;
+      });
+      if (iCallsJ || jCallsI) union(i, j);
+    }
+  }
+
+  // Step 3: Collect groups
+  const groupMap = {};
+  items.forEach((item, i) => {
+    const root = find(i);
+    if (!groupMap[root]) groupMap[root] = [];
+    groupMap[root].push(item);
+  });
+
+  // Step 4: Label each group by dominant directory or file pattern
+  const groups = Object.values(groupMap).map(members => {
+    const dirCounts = {};
+    members.forEach(m => { dirCounts[m.dir] = (dirCounts[m.dir] || 0) + 1; });
+    const topDir = Object.entries(dirCounts).sort((a, b) => b[1] - a[1])[0][0];
+
+    const files = [...new Set(members.map(m => m.file))];
+    let label = topDir;
+    if (files.length === 1) label = files[0].replace('.py', '');
+
+    return {
+      label,
+      members,
+      files,
+      addedCount: members.filter(m => m.type === 'added').length,
+      modifiedCount: members.filter(m => m.type === 'modified').length,
+      removedCount: members.filter(m => m.type === 'removed').length,
+    };
+  });
+
+  // Sort: largest groups first
+  groups.sort((a, b) => b.members.length - a.members.length);
+  return groups;
+}
+
 function showImpactPanel(change) {
   window._lastChangeForPanel = change;
   const gData = graph3d ? graph3d.graphData() : {nodes:[]};
@@ -1764,31 +1921,38 @@ function showImpactPanel(change) {
   if (changeViewMode === 'summary') {
     // ═══════════════ SUMMARY MODE ═══════════════
 
-    // Session overview — aggregate all files changed this session
-    if (changeHistory.length > 1) {
-      const fileMap = {};
-      changeHistory.forEach(c => {
-        const f = (c.file || '').split('/').pop();
-        if (!fileMap[f]) fileMap[f] = {added: 0, modified: 0, removed: 0, risk: 'LOW', file: c.file};
-        fileMap[f].added += (c.nodes_added || []).length;
-        fileMap[f].modified += (c.nodes_modified || []).length;
-        fileMap[f].removed += (c.nodes_removed || []).length;
-        const riskOrder = {LOW:0, MEDIUM:1, HIGH:2, CRITICAL:3};
-        if (c.impact && riskOrder[c.impact.risk] > riskOrder[fileMap[f].risk]) fileMap[f].risk = c.impact.risk;
-      });
-      const files = Object.entries(fileMap).sort((a,b) => (b[1].added+b[1].modified+b[1].removed) - (a[1].added+a[1].modified+a[1].removed));
-      html += '<div class="insp-section"><h4>Session: ' + files.length + ' files changed</h4>';
-      files.forEach(([fname, stats]) => {
-        const rc = stats.risk === 'CRITICAL' ? 'var(--red)' : stats.risk === 'HIGH' ? 'var(--peach)' : stats.risk === 'MEDIUM' ? 'var(--yellow)' : 'var(--green)';
-        html += '<div style="display:flex;gap:6px;align-items:center;padding:2px 0;font-size:10px;cursor:pointer" onclick="focusChangeFile(\'' + escHtml(fname) + '\')">';
-        html += '<span style="color:var(--subtext);min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + fname + '</span>';
-        if (stats.added) html += '<span style="color:var(--green)">+' + stats.added + '</span>';
-        if (stats.modified) html += '<span style="color:var(--yellow)">~' + stats.modified + '</span>';
-        if (stats.removed) html += '<span style="color:var(--red)">-' + stats.removed + '</span>';
-        html += '<span class="risk-badge risk-' + stats.risk + '" style="margin-left:auto;font-size:8px;padding:0 4px">' + stats.risk + '</span>';
-        html += '</div>';
-      });
+    // Change narrative — one-sentence description at the very top
+    const narrative = generateChangeNarrative(change);
+    if (narrative) {
+      html += '<div class="insp-section" style="padding:8px 12px;border-left:2px solid ' + riskColor + '">';
+      html += '<div style="font-size:11px;color:var(--text);line-height:1.5;font-style:italic">' + escHtml(narrative) + '</div>';
       html += '</div>';
+    }
+
+    // Session overview — semantic groups of changed functions
+    if (changeHistory.length > 1) {
+      const groups = buildSemanticGroups(changeHistory);
+      if (groups.length > 0) {
+        html += '<div class="insp-section"><h4>Session: ' + groups.length + ' change group' + (groups.length !== 1 ? 's' : '') + '</h4>';
+        groups.forEach(group => {
+          html += '<div style="margin-bottom:8px">';
+          html += '<div style="font-size:10px;font-weight:bold;color:var(--text);margin-bottom:3px">' + escHtml(group.label) + ' <span style="color:var(--overlay0);font-weight:normal">(' + group.members.length + ')</span></div>';
+          group.files.forEach(fname => {
+            const fileMembers = group.members.filter(m => m.file === fname);
+            const addCount = fileMembers.filter(m => m.type === 'added').length;
+            const modCount = fileMembers.filter(m => m.type === 'modified').length;
+            const remCount = fileMembers.filter(m => m.type === 'removed').length;
+            html += '<div style="font-size:9px;padding:1px 0 1px 10px;color:var(--subtext)">';
+            html += escHtml(fname);
+            if (addCount) html += ' <span style="color:var(--green)">+' + addCount + '</span>';
+            if (modCount) html += ' <span style="color:var(--yellow)">~' + modCount + '</span>';
+            if (remCount) html += ' <span style="color:var(--red)">-' + remCount + '</span>';
+            html += '</div>';
+          });
+          html += '</div>';
+        });
+        html += '</div>';
+      }
     }
 
     // Current file summary card
@@ -1988,10 +2152,62 @@ function showImpactPanel(change) {
   }
 }
 
+// ── Pulsing glow rings for spotlight change mode ──────────────
+function addChangeGlowRings() {
+  if (!graph3d || typeof THREE === 'undefined') return;
+  const scene = graph3d.scene();
+  if (!scene) return;
+
+  // Remove previous glow rings
+  if (_changeGlowGroup) {
+    scene.remove(_changeGlowGroup);
+    _changeGlowGroup = null;
+  }
+
+  _changeGlowGroup = new THREE.Group();
+  const gData = graph3d.graphData();
+
+  gData.nodes.forEach(n => {
+    if (!activeChangeIds.has(n.id)) return;
+    const geo = new THREE.SphereGeometry(1, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xf9e2af,
+      transparent: true,
+      opacity: 0.3,
+    });
+    const glow = new THREE.Mesh(geo, mat);
+    const size = (SIZES[n.label] || 2) * 2.5;
+    glow.scale.set(size, size, size);
+    glow.position.set(n.x || 0, n.y || 0, n.z || 0);
+    glow.userData = { nodeId: n.id };
+    _changeGlowGroup.add(glow);
+  });
+
+  scene.add(_changeGlowGroup);
+
+  // Animate pulse
+  function pulseGlow() {
+    if (!_changeGlowGroup || !changeHighlightActive) return;
+    const t = (Date.now() % 2000) / 2000;
+    const opacity = 0.15 + 0.2 * Math.sin(t * Math.PI * 2);
+    _changeGlowGroup.children.forEach(function(child) {
+      if (child.material) child.material.opacity = opacity;
+    });
+    requestAnimationFrame(pulseGlow);
+  }
+  pulseGlow();
+}
+
 function clearChangeHighlight() {
   changeHighlightActive = false;
   activeChangeIds.clear();
   activeImpactIds.clear();
+  // Remove pulsing glow rings
+  if (_changeGlowGroup && graph3d) {
+    const scene = graph3d.scene();
+    if (scene) scene.remove(_changeGlowGroup);
+    _changeGlowGroup = null;
+  }
   // Close impact panel
   document.getElementById('inspector').classList.remove('open');
   setTimeout(function() { if (graph3d) graph3d.width(document.getElementById('graph-container').clientWidth); }, 100);
