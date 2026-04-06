@@ -1669,6 +1669,7 @@ async function fetchTestSuggestions(names) {
 // 2D impact graph — progressive disclosure: start with changed nodes only,
 // click to expand neighbors. Labels on hover, not rendered permanently.
 let _expandedNode2d = null; // currently expanded node in 2D graph
+let hovered2dId = null; // hover-to-show labels when >15 nodes
 
 function buildImpactSubgraph() {
   const gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
@@ -2257,8 +2258,11 @@ function showImpactPanel(change) {
         if (n._calleeCount) tip += '\n' + n._calleeCount + ' callees';
         return tip;
       })
-      // Always show labels on all nodes — truncate long names
-      .nodeCanvasObjectMode(() => 'after')
+      // Conditional labels: always show when <=15 nodes, hover-only when >15
+      .nodeCanvasObjectMode(n => {
+        if (subgraph.nodes.length <= 15) return 'after';
+        return (n.id === hovered2dId) ? 'after' : undefined;
+      })
       .nodeCanvasObject((n, ctx, globalScale) => {
         const fontSize = Math.max(10 / globalScale, 2);
         ctx.font = fontSize + 'px sans-serif';
@@ -2280,12 +2284,14 @@ function showImpactPanel(change) {
           previewNode(n.id);
         }
       })
+      .onNodeHover(n => { hovered2dId = n ? n.id : null; })
       .cooldownTicks(80)
       .warmupTicks(40);
 
-    // Stronger repulsion so nodes spread out — use the graph's own d3 ref
-    impactGraph2d.d3Force('charge').strength(-200);
-    impactGraph2d.d3Force('link').distance(60);
+    // Adaptive repulsion — stronger for large graphs to reduce overlap
+    const nodeCount = subgraph.nodes.length;
+    impactGraph2d.d3Force('charge').strength(nodeCount > 15 ? -400 : -200);
+    impactGraph2d.d3Force('link').distance(nodeCount > 15 ? 100 : 60);
   }, 100);
 
   // Fetch test suggestions async

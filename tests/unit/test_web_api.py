@@ -897,3 +897,26 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+# ---------------------------------------------------------------------------
+# 2D impact graph label collision avoidance
+# ---------------------------------------------------------------------------
+
+class TestImpactGraphLabels:
+    """2D impact graph label collision avoidance (v0.8.0)."""
+
+    def test_conditional_label_mode(self):
+        """2D graph uses conditional label rendering based on node count."""
+        from vector_graph.api.web_server import _HTML
+        assert "nodes.length <= 15" in _HTML or "subgraph.nodes.length <= 15" in _HTML
+
+    def test_2d_hover_callback(self):
+        """2D impact graph has onNodeHover for hover-to-show labels."""
+        from vector_graph.api.web_server import _HTML
+        assert "hovered2dId" in _HTML
+
+    def test_adjusted_charge_for_large_graphs(self):
+        """2D graph uses stronger charge for >15 nodes."""
+        from vector_graph.api.web_server import _HTML
+        assert "-400" in _HTML
