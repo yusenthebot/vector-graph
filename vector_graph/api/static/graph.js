@@ -141,6 +141,7 @@ let activeImpactIds = new Set();    // impact chain nodes (depth 1-2 callers)
 let cumulativeHeat = {};            // nodeId -> change count this session
 let changeHighlightActive = false;  // true when showing change overlay
 let _changeGlowGroup = null;        // THREE.Group of pulsing glow spheres for changed nodes
+let _selectionGlowGroup = null;     // THREE.Group of pulsing glow spheres for selected node
 
 // ── Change grouping state (5-second debounce window) ──
 let changeGroupBuffer = [];       // buffered change events
@@ -621,6 +622,33 @@ function selectNode(id) {
       1000
     );
   }
+  // F5: Selection glow halo
+  addSelectionGlow(id);
+  // F8: Constellation expand — briefly push 1-hop neighbors outward
+  if (graph3d && highlightNodes.size > 0) {
+    var selNodePos = graph3d.graphData().nodes.find(function(n) { return n.id === id; });
+    if (selNodePos) {
+      var cx = selNodePos.x || 0, cy = selNodePos.y || 0, cz = selNodePos.z || 0;
+      var neighborSet = new Set(highlightNodes);
+      graph3d.d3Force('constellation', function(alpha) {
+        graph3d.graphData().nodes.forEach(function(n) {
+          if (!neighborSet.has(n.id)) return;
+          var dx = (n.x || 0) - cx, dy = (n.y || 0) - cy, dz = (n.z || 0) - cz;
+          var dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+          var push = alpha * 40 / dist;
+          n.vx = (n.vx || 0) + dx * push;
+          n.vy = (n.vy || 0) + dy * push;
+          n.vz = (n.vz || 0) + dz * push;
+        });
+      });
+      // Restart simulation briefly
+      graph3d.d3ReheatSimulation();
+      // Remove force after 1.5s
+      setTimeout(function() {
+        if (graph3d) graph3d.d3Force('constellation', null);
+      }, 1500);
+    }
+  }
   // Nebula highlighting for selected node's group
   if (nebulaGroup) {
     const selNode = allNodes.find(n => n.id === id);
@@ -640,6 +668,8 @@ function selectNode(id) {
 
 function deselectNode() {
   selectedId = null;
+  removeSelectionGlow();
+  if (graph3d) graph3d.d3Force('constellation', null);
   depthFilter = 0;
   highlightNodes.clear();
   highlightLinks.clear();
@@ -2368,6 +2398,66 @@ function clearChangeHighlight() {
       if (child.userData.isNebula) child.material.opacity = 0.07;
       if (child.userData.isLabel) child.material.opacity = 1.0;
     });
+  }
+}
+
+// ── Selection glow halo (F5) ────────────────────────────────
+function addSelectionGlow(nodeId) {
+  if (!graph3d || typeof THREE === 'undefined') return;
+  var scene = graph3d.scene();
+  if (!scene) return;
+  removeSelectionGlow();
+
+  _selectionGlowGroup = new THREE.Group();
+  var gData = graph3d.graphData();
+
+  // Main glow on selected node
+  var selNode = gData.nodes.find(function(n) { return n.id === nodeId; });
+  if (selNode) {
+    var geo = new THREE.SphereGeometry(1, 16, 12);
+    var mat = new THREE.MeshBasicMaterial({ color: 0xcdd6f4, transparent: true, opacity: 0.3 });
+    var glow = new THREE.Mesh(geo, mat);
+    var size = (SIZES[selNode.label] || 2) * 3.0;
+    glow.scale.set(size, size, size);
+    glow.position.set(selNode.x || 0, selNode.y || 0, selNode.z || 0);
+    glow.userData = { nodeId: nodeId, isPrimary: true };
+    _selectionGlowGroup.add(glow);
+  }
+
+  // Faint glow on connected neighbors
+  highlightNodes.forEach(function(nid) {
+    var nd = gData.nodes.find(function(n) { return n.id === nid; });
+    if (!nd) return;
+    var geo2 = new THREE.SphereGeometry(1, 12, 8);
+    var mat2 = new THREE.MeshBasicMaterial({ color: 0xcdd6f4, transparent: true, opacity: 0.1 });
+    var g2 = new THREE.Mesh(geo2, mat2);
+    var s2 = (SIZES[nd.label] || 2) * 2.0;
+    g2.scale.set(s2, s2, s2);
+    g2.position.set(nd.x || 0, nd.y || 0, nd.z || 0);
+    _selectionGlowGroup.add(g2);
+  });
+
+  scene.add(_selectionGlowGroup);
+
+  // Pulse animation for primary glow
+  function pulseSelGlow() {
+    if (!_selectionGlowGroup || !selectedId) return;
+    var t = (Date.now() % 3000) / 3000;
+    _selectionGlowGroup.children.forEach(function(child) {
+      if (child.userData && child.userData.isPrimary) {
+        child.material.opacity = 0.2 + 0.2 * Math.sin(t * Math.PI * 2);
+      }
+    });
+    requestAnimationFrame(pulseSelGlow);
+  }
+  pulseSelGlow();
+}
+
+function removeSelectionGlow() {
+  if (_selectionGlowGroup && graph3d) {
+    var scene = graph3d.scene();
+    if (scene) scene.remove(_selectionGlowGroup);
+    _selectionGlowGroup = null;
   }
 }
 

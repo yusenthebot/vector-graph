@@ -897,3 +897,27 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+# ---------------------------------------------------------------------------
+# Selection Glow (F5) + Constellation Expand (F8)
+# ---------------------------------------------------------------------------
+
+class TestGlowAndConstellation:
+    """Selection glow + constellation expand animation (v0.9.1)."""
+
+    def test_js_selection_glow_group(self):
+        from vector_graph.api.web_server import _HTML
+        assert '_selectionGlowGroup' in _HTML
+
+    def test_js_add_selection_glow(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function addSelectionGlow(' in _HTML
+
+    def test_js_remove_selection_glow(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'removeSelectionGlow' in _HTML
+
+    def test_js_constellation_force(self):
+        from vector_graph.api.web_server import _HTML
+        assert "'constellation'" in _HTML
