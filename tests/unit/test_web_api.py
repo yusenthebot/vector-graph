@@ -1247,3 +1247,15 @@ class TestGlowAndConstellation:
     def test_js_constellation_force(self):
         from vector_graph.api.web_server import _HTML
         assert "'constellation'" in _HTML
+
+
+class TestNodeLabels:
+    """Node text labels with LOD (v0.9.1 F1)."""
+
+    def test_js_node_label_sprite(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'THREE.Sprite' in _HTML or 'SpriteMaterial' in _HTML
+
+    def test_js_label_lod_distance(self):
+        from vector_graph.api.web_server import _HTML
+        assert '_updateLabelVisibility' in _HTML or 'labelVisible' in _HTML

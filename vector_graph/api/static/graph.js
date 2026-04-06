@@ -75,6 +75,59 @@ function _initGeo() {
   _GEO._default  = new THREE.SphereGeometry(1, 12, 8);
 }
 
+// ── Node label sprite factory (one canvas per node, ~12KB each, ~7MB total) ──
+function _makeNodeLabel(text, color) {
+  var canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 48;
+  var ctx = canvas.getContext('2d');
+  ctx.font = '20px monospace';
+  var label = text.length > 20 ? text.slice(0, 18) + '..' : text;
+  var tw = ctx.measureText(label).width;
+  // Background pill
+  ctx.fillStyle = 'rgba(17, 17, 27, 0.7)';
+  ctx.fillRect(128 - tw / 2 - 6, 8, tw + 12, 28);
+  // Text
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 128, 22);
+
+  var texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  var spriteMat = new THREE.SpriteMaterial({map: texture, transparent: true, depthWrite: false});
+  var sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(12, 2.25, 1);
+  return sprite;
+}
+
+// ── LOD label visibility — throttled at 200ms (5fps), distance-based ──
+function _updateLabelVisibility() {
+  if (!graph3d) return;
+  var cam = graph3d.camera();
+  if (!cam) return;
+  var camPos = cam.position;
+  graph3d.graphData().nodes.forEach(function(n) {
+    var obj = n.__threeObj;
+    if (!obj || !obj.children) return;
+    obj.children.forEach(function(child) {
+      if (child.userData && child.userData.isNodeLabel) {
+        var dx = (n.x || 0) - camPos.x;
+        var dy = (n.y || 0) - camPos.y;
+        var dz = (n.z || 0) - camPos.z;
+        var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < 120) {
+          child.visible = true;
+        } else if (dist < 250) {
+          child.visible = (n.label === 'Class' || n.label === 'File');
+        } else {
+          child.visible = false;
+        }
+      }
+    });
+  });
+}
+
 // ── Extracted node color logic (standalone for nodeThreeObject + refreshNodeAppearance) ──
 function getNodeColor(n) {
   // 1. User selection (click) — highest priority
@@ -142,10 +195,13 @@ function refreshNodeAppearance() {
   if (!graph3d) return;
   graph3d.graphData().nodes.forEach(n => {
     const obj = n.__threeObj;
-    if (obj && obj.material) {
-      obj.material.color.set(getNodeColor(n));
+    if (!obj) return;
+    // Handle both direct Mesh (legacy) and Group wrapper (with label sprite)
+    const mesh = obj.isMesh ? obj : (obj.children && obj.children[0]);
+    if (mesh && mesh.material) {
+      mesh.material.color.set(getNodeColor(n));
       const s = getNodeSize(n) * 0.8;
-      obj.scale.set(s, s, s);
+      mesh.scale.set(s, s, s);
     }
   });
 }
@@ -328,7 +384,16 @@ function initGraph() {
       const mat = new THREE.MeshLambertMaterial({color, transparent: true, opacity: 0.9});
       const mesh = new THREE.Mesh(geo, mat);
       mesh.scale.setScalar(size * 0.8);
-      return mesh;
+
+      // Label sprite — LOD controls visibility via _updateLabelVisibility
+      var group = new THREE.Group();
+      group.add(mesh);
+      var labelSprite = _makeNodeLabel(n.name, COLORS[n.label] || '#cdd6f4');
+      labelSprite.position.set(0, size * 1.2, 0);
+      labelSprite.visible = false; // hidden by default, LOD shows when close enough
+      labelSprite.userData = {isNodeLabel: true};
+      group.add(labelSprite);
+      return group;
     })
     .nodeThreeObjectExtend(false)
     // nodeVal kept for force simulation radius (doesn't affect rendering with custom objects)
@@ -510,6 +575,9 @@ function initGraph() {
 
   // Render nebulae once when simulation stabilizes
   graph3d.onEngineStop(() => updateNebulae());
+
+  // Label LOD — check visibility every 200ms (5fps) based on camera distance
+  setInterval(_updateLabelVisibility, 200);
 }
 
 function _seedGroupPositions(nodes) {

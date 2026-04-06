@@ -21,5 +21,7 @@
 | F4: Legend panel | Beta | merged |
 | F7: Minimap overlay | Beta | merged |
 
-**Alpha**: feat/alpha-visual-wins complete — 4 new tests, 809 total passing
+| F1: Node text labels with LOD | Alpha | done |
+
+**Alpha**: F1 node labels done — 2 new tests, 821 total passing. `_makeNodeLabel` + `_updateLabelVisibility` + Group wrapper in `nodeThreeObject`. `refreshNodeAppearance` updated for Group structure.
 **Beta**: feat/beta-legend-minimap merged into main — legend + minimap integrated
