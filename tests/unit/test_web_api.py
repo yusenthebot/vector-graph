@@ -897,3 +897,35 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+# ---------------------------------------------------------------------------
+# Legend panel + minimap (v0.9.1)
+# ---------------------------------------------------------------------------
+
+class TestLegendAndMinimap:
+    """Legend panel + minimap (v0.9.1)."""
+
+    def test_html_legend_element(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="legend"' in _HTML
+
+    def test_js_build_legend(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function buildLegend()' in _HTML or 'buildLegend' in _HTML
+
+    def test_css_legend_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#legend' in _HTML
+
+    def test_html_minimap_canvas(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="minimap"' in _HTML
+
+    def test_js_update_minimap(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'updateMinimap' in _HTML
+
+    def test_css_minimap_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#minimap' in _HTML

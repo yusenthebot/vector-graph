@@ -108,6 +108,11 @@
   - vector_graph/watch/file_watcher.py (add from_pipeline classmethod, _process_event_with_source test helper, _register_file_in_graph_from_result helper, _rebuild_edges_for_file — removes stale IMPORTS/CALLS edges then re-resolves; _process_event now rebuilds edges on modify/create)
 
 ## Beta
+- **Status**: in_progress
+- **Task**: Legend panel (F4) + Minimap (F7) overlay — v0.9.1
+- **Branch**: feat/beta-legend-minimap
+
+## Beta (prev)
 - **Status**: done
 - **Task**: Enriched change panel UI — expandable diffs, test suggestions, change frequency
 - **Branch**: feat/beta-enriched-change-panel-ui
