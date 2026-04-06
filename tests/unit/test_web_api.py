@@ -545,9 +545,9 @@ class TestSSEAndChangesTimeline:
         assert '/api/events' in _HTML
 
     def test_html_contains_changes_tab(self) -> None:
-        """HTML template has Changes sidebar tab."""
+        """HTML template has Changes sidebar section (accordion)."""
         from vector_graph.api.web_server import _HTML
-        assert "switchTab('changes')" in _HTML
+        assert 'id="section-changes"' in _HTML
         assert 'panel-changes' in _HTML
 
     def test_html_contains_change_highlight(self) -> None:
@@ -897,3 +897,51 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+# ---------------------------------------------------------------------------
+# Sidebar accordion sections (v0.9.0)
+# ---------------------------------------------------------------------------
+
+class TestSidebarAccordions:
+    """Sidebar tabs replaced with stacked accordion sections (v0.9.0)."""
+
+    def test_html_sidebar_sections(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="sidebar-sections"' in _HTML
+
+    def test_html_all_four_sections(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="section-explorer"' in _HTML
+        assert 'id="section-groups"' in _HTML
+        assert 'id="section-filters"' in _HTML
+        assert 'id="section-changes"' in _HTML
+
+    def test_html_section_headers(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'section-header' in _HTML
+        assert 'section-body' in _HTML
+
+    def test_html_no_sidebar_tabs(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'class="sidebar-tabs"' not in _HTML
+
+    def test_html_panel_ids_preserved(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="panel-explorer"' in _HTML
+        assert 'id="panel-groups"' in _HTML
+        assert 'id="panel-filters"' in _HTML
+        assert 'id="panel-changes"' in _HTML
+
+    def test_js_toggle_section(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function toggleSection(' in _HTML
+
+    def test_js_section_state_persisted(self):
+        from vector_graph.api.web_server import _HTML
+        assert "'vg-open-sections'" in _HTML
+
+    def test_css_section_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '.sidebar-section' in _HTML
+        assert '.section-header' in _HTML
