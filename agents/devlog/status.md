@@ -12,8 +12,9 @@
   - tests/unit/test_web_api.py (TestResizablePanels: 2 tests)
 
 ## Alpha
-- **Status**: done
-- **Task**: Add visualization mode selector UI + keyboard shortcuts to frontend
+- **Status**: in_progress
+- **Task**: Feature 3 — Command Palette Overlay (Ctrl+K + /)
+- **Branch**: feat/alpha-cmd-palette
 - **Branch**: feat/alpha-mode-selector-ui
 - **Result**: 11 new tests (TDD RED->GREEN), 69/69 in test_web_api.py, zero regressions
 - **Files modified**:

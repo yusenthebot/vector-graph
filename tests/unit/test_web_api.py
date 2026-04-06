@@ -897,3 +897,46 @@ class TestGitHistoryEndpoint:
         from vector_graph.api import web_server
         source = inspect.getsource(web_server)
         assert "/api/git-history" in source
+
+
+class TestCommandPalette:
+    """Command palette overlay (v0.9.0)."""
+
+    def test_html_cmd_palette_element(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="cmd-palette"' in _HTML
+
+    def test_html_cmd_input(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="cmd-input"' in _HTML
+
+    def test_html_cmd_results(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="cmd-results"' in _HTML
+
+    def test_js_open_cmd_palette(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function openCmdPalette()' in _HTML
+
+    def test_js_close_cmd_palette(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'function closeCmdPalette()' in _HTML
+
+    def test_js_cmd_commands_list(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'CMD_COMMANDS' in _HTML
+
+    def test_js_keyboard_nav(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'ArrowDown' in _HTML
+        assert 'ArrowUp' in _HTML
+
+    def test_css_cmd_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '#cmd-palette' in _HTML
+        assert '#cmd-dialog' in _HTML
+        assert '.cmd-item' in _HTML
+
+    def test_js_slash_opens_palette(self):
+        from vector_graph.api.web_server import _HTML
+        assert "openCmdPalette" in _HTML
