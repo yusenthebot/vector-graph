@@ -159,6 +159,21 @@ let changeGroupBuffer = [];       // buffered change events
 let changeGroupTimer = null;      // debounce timer
 const CHANGE_GROUP_WINDOW = 5000; // 5 seconds
 
+// ── FPS counter ──────────────────────────────────────────────
+let _fpsFrames = 0, _fpsLast = performance.now();
+function _fpsLoop() {
+  _fpsFrames++;
+  const now = performance.now();
+  if (now - _fpsLast >= 1000) {
+    const el = document.getElementById('sb-fps');
+    if (el) el.textContent = _fpsFrames + ' fps';
+    _fpsFrames = 0;
+    _fpsLast = now;
+  }
+  requestAnimationFrame(_fpsLoop);
+}
+requestAnimationFrame(_fpsLoop);
+
 // ── Data loading ────────────────────────────────────────────
 async function loadData() {
   // Pre-cache all 3 modes in parallel for instant switching
@@ -225,7 +240,7 @@ async function loadData() {
   buildExplorer();
   buildGroupsPanel();
   updateChangesPanel();
-  updateStats();
+  updateStatusBar();
 }
 
 // ── Mode switching (instant — uses pre-cached data, no destroy/recreate) ──
@@ -287,7 +302,7 @@ function switchMode(mode) {
   buildExplorer();
   buildGroupsPanel();
   updateChangesPanel();
-  updateStats();
+  updateStatusBar();
 }
 
 // ── Graph init ──────────────────────────────────────────────
@@ -608,7 +623,7 @@ function refreshGraph() {
   const {nodes, links} = getFilteredData();
   _seedGroupPositions(nodes);
   graph3d.graphData({nodes, links});
-  updateStats();
+  updateStatusBar();
 }
 
 // ── Selection ───────────────────────────────────────────────
@@ -659,6 +674,7 @@ function selectNode(id) {
     });
   }
   updateDepthButtons();
+  updateStatusBar();
 }
 
 function toggleSidebar() {
@@ -700,6 +716,7 @@ function deselectNode() {
   }
   refreshGraph();
   updateDepthButtons();
+  updateStatusBar();
 }
 
 // ── Preview (fly to node without clearing change context) ──
@@ -1300,16 +1317,30 @@ function updateDepthButtons() {
   });
 }
 
-function updateStats() {
-  const {nodes: filteredNodes, links: filteredLinks} = getFilteredData();
-  const groupCount = new Set(allNodes.map(n => n.group)).size;
-  document.getElementById('sidebar-stats').textContent = `${filteredNodes.length} nodes · ${filteredLinks.length} edges · ${groupCount} groups`;
-  // Update topbar stats span without overwriting the mode-selector buttons
-  const topbarStats = document.getElementById('topbar-stats');
-  if (topbarStats) {
-    const modeNames = {architecture: 'Architecture', logic: 'Logic', deep: 'Deep'};
-    topbarStats.innerHTML = '<span>' + (modeNames[currentMode] || currentMode) + '</span> ' +
-      filteredNodes.length + ' nodes &middot; ' + filteredLinks.length + ' links';
+function updateStatusBar() {
+  const {nodes: fn, links: fl} = getFilteredData();
+  const gc = new Set(allNodes.map(n => n.group)).size;
+  const modeEl = document.getElementById('sb-mode');
+  if (modeEl) {
+    const names = {architecture: 'ARCH', logic: 'LOGIC', deep: 'DEEP'};
+    const colors = {architecture: 'var(--green)', logic: 'var(--blue)', deep: 'var(--mauve)'};
+    const col = colors[currentMode] || 'var(--blue)';
+    modeEl.textContent = names[currentMode] || currentMode;
+    modeEl.style.cssText = 'padding:1px 8px;border-radius:2px;font-weight:bold;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;margin-right:8px;'
+      + 'color:' + col + ';'
+      + 'background:color-mix(in srgb,' + col + ' 15%,transparent)';
+  }
+  const statsEl = document.getElementById('sb-stats');
+  if (statsEl) statsEl.innerHTML = '<span>' + fn.length + '</span> nodes  <span>' + fl.length + '</span> edges  <span>' + gc + '</span> groups';
+  const hintsEl = document.getElementById('sb-hints');
+  if (hintsEl) {
+    if (selectedId) {
+      hintsEl.innerHTML = '<kbd>Esc</kbd> back  <kbd>d</kbd> depth  <kbd>h</kbd> health';
+    } else if (changeHighlightActive) {
+      hintsEl.innerHTML = '<kbd>Esc</kbd> clear';
+    } else {
+      hintsEl.innerHTML = '<kbd>Ctrl+K</kbd> search  <kbd>1/2/3</kbd> mode  <kbd>Ctrl+B</kbd> sidebar  <kbd>?</kbd> help';
+    }
   }
 }
 
@@ -1605,6 +1636,9 @@ function handleChangeEvent(change) {
       });
     }
   }
+
+  // 10. Update status bar hints to reflect change highlight mode
+  updateStatusBar();
 }
 
 function toggleDiff(id, toggle) {
@@ -2418,6 +2452,7 @@ function clearChangeHighlight() {
       if (child.userData.isLabel) child.material.opacity = 1.0;
     });
   }
+  updateStatusBar();
 }
 
 // ── Changes sidebar panel ────────────────────────────────────
