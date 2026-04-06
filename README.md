@@ -7,7 +7,7 @@ pip install vector-graph
 vector-graph ~/project --watch --serve
 ```
 
-Open `http://localhost:5555` — nodes grouped into nebulae by package, colored by group, with stardust particles and orbital rings.
+Open `http://localhost:5555` — nodes grouped into nebulae by package, with distinct shapes per type (cubes for classes, diamonds for methods, spheres for functions).
 
 ## Quick Start
 
@@ -110,27 +110,69 @@ vector-graph --install-hook
 vector-graph-mcp ~/project
 ```
 
-## 3D Nebula Visualization
+## 3D Visualization
+
+### Visualization Modes
+
+Three levels of detail, switchable via sidebar buttons or keyboard shortcuts:
+
+| Mode | Key | What you see | Use case |
+|------|-----|-------------|----------|
+| **Arch** | `1` | Files + import edges only | Module dependency overview |
+| **Logic** | `2` | Files, functions, classes, methods + call edges | Call flow analysis (default) |
+| **Deep** | `3` | All types including variables, decorators + all edges | Full data flow |
+
+All three modes pre-cached on load — switching is instant.
+
+### Node Shapes
+
+Each node type has a distinct 3D geometry:
+
+| Shape | Type | Description |
+|-------|------|-------------|
+| Flat disc | File | Python source file |
+| Cube | Class | Class definition |
+| Sphere | Function | Standalone function |
+| Diamond | Method | Class method |
+| Small pyramid | Variable | Module-level variable |
+| Ring | Decorator | Decorator function |
+| Icosahedron | ROS2Node | ROS2 node |
+
+### Nebulae
 
 Nodes grouped by package directory into nebulae — transparent sphere shells with stardust particles and orbital rings.
 
-- **Nebulae**: each package directory = one nebula cluster (Three.js spheres + particles)
-- **Node colors**: match their nebula (golden-ratio hue spacing)
 - **Click node**: everything else dims, connections highlighted, inspector opens
 - **Groups tab**: click a package to fly camera to that nebula
-- **Health mode**: toggle in Filters to color nodes by complexity risk (green/yellow/orange/red)
+- **Health mode**: toggle in Filters to color nodes by complexity risk
+- **Resizable panels**: drag sidebar and inspector edges to resize
 
 ### Live Change Visualization
 
 When `--watch --serve` is active:
+
+**Summary mode** (default):
+- Compact change card with add/modify/remove counts
+- Auto-generated flow diagrams: `[callers] -> [changed_fn] -> [callees]`
+- Removed functions show old code with syntax highlighting + orphaned callers
+- Impact summary with blast radius count
+
+**Detail mode**:
+- Inline unified code diffs with syntax highlighting (green +lines, red -lines)
+- Expandable source preview for each dependency
+- Test suggestions (which tests to run)
+- Session change frequency counter
+
+Both modes:
 - Camera auto-flies to changed area
-- Changed nodes glow bright yellow (persistent)
-- Impact chain highlighted in orange (BFS depth 2)
-- Everything else dims to near-invisible
-- Affected nebula brightens
+- Changed nodes glow yellow, impact chain highlighted orange
+- Affected nebula brightens, everything else dims
 - Changes tab shows timeline with risk badges
-- ESC or background click to clear highlight
-- Cumulative heatmap: frequently changed nodes glow progressively warmer
+- Cumulative heatmap: frequently changed nodes glow warmer
+
+### Tooltips
+
+Hover any UI element for context — mode buttons explain what each mode includes, filter items describe node/edge types, depth buttons explain hop limits.
 
 ## Analysis Engine
 
@@ -141,6 +183,7 @@ When `--watch --serve` is active:
 - **Cycle detection**: Tarjan's SCC for dependency cycles
 - **Communities**: label propagation or union-find clustering
 - **Execution flows**: entry point scoring + BFS trace
+- **Change tracking**: AST signature comparison detects real modifications (not just file saves)
 - **ROS2**: node/topic/service/action extraction from AST + launch file parsing
 
 ## Architecture
@@ -151,9 +194,9 @@ vector_graph/
   parse/        Python AST parser, import resolver, type inference
   analysis/     type_inference, call_graph, complexity, query, export,
                 cycles, impact, execution_flow, community, orphan, suggest_tests
-  watch/        file_watcher (watchdog), change_tracker (diff + impact)
-  api/          web_server (Three.js nebula), mcp_server (15 tools),
-                sse_server (real-time push), tui (rich dashboard), python_api (CLI)
+  watch/        file_watcher (watchdog), change_tracker (diff + impact + source snapshots)
+  api/          web_server, mcp_server (15 tools), sse_server, tui, python_api (CLI)
+              static/   graph.js, graph.css, index.html (extracted from web_server)
   hooks/        Claude Code hook installer
   ros2/         node_extractor, launch_parser, msg_parser, ros2_graph
   pipeline.py   9-phase orchestrator
@@ -161,8 +204,8 @@ vector_graph/
 
 Pipeline phases:
 ```
-1.Walk → 2.Parse → 3.Symbols → 3b.Heritage → 3c.Types →
-4.Imports → 5.Calls → 6.Communities → 7.Flows → 8.ROS2
+1.Walk -> 2.Parse -> 3.Symbols -> 3b.Heritage -> 3c.Types ->
+4.Imports -> 5.Calls -> 6.Communities -> 7.Flows -> 8.ROS2
 ```
 
 ## Example Project
@@ -175,14 +218,14 @@ vector-graph examples/taskflow --serve --max-nodes 500
 ## Testing
 
 ```bash
-python3 -m pytest -q              # 670 tests, ~19s
-python3 -m pytest --cov=vector_graph  # 88% coverage
+python3 -m pytest -q              # 734 tests, ~20s
+python3 -m pytest --cov=vector_graph  # 86% coverage
 ```
 
 ## Dependencies
 
 - **Core**: zero (stdlib `ast` only)
-- **Visualization**: Three.js r137 + 3d-force-graph 1.79.1 (CDN)
+- **Visualization**: Three.js r137 + 3d-force-graph 1.79.1 (CDN), highlight.js 11.9.0
 - **Watch**: watchdog (optional)
 - **MCP**: mcp (optional)
 - **TUI**: rich (optional)

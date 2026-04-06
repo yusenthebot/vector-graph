@@ -2,26 +2,72 @@
 
 ## Gamma
 - **Status**: done
-- **Task**: T9 — Integration tests + final verification for vector-graph v0.3.0
-- **Branch**: feat/gamma-integration-tests
-- **Result**: 8 integration tests written, all 13 integration tests pass, 502/502 total pass, 90.19% coverage
+- **Task**: Add resizable sidebar and inspector panels
+- **Branch**: feat/gamma-resizable-panels
+- **Result**: 2 new tests (TDD GREEN), 693/693 total pass, zero regressions
 - **Files modified**:
-  - tests/integration/test_self_analysis.py (+8 tests: AC3/AC4/AC5/AC10 coverage)
-- **AC verification**:
-  - AC1/AC2: type-aware resolution active, global ratio 6.5% (<<80%)
-  - AC3: pipeline completes in 3.8s on self-analysis (< 5s)
-  - AC4: all 8 query types exercised (callers_of, subclasses_of, by_file, by_pattern)
-  - AC5: JSON export validated (node/edge count match, json.loads passes); DOT starts with 'digraph'
-  - AC6: file watcher tests covered by T7 (Alpha)
-  - AC7: grep returns empty — no graph: object params remain
-  - AC8: 90.19% overall coverage, no module below 60%
-  - AC9: all original 330 tests pass (502 total)
-  - AC10: GLOBAL-tier 6.5% of CALLS, well under 80% threshold
+  - vector_graph/api/static/index.html (sidebar-resize + inspector-resize handles added)
+  - vector_graph/api/static/graph.css (resize-handle + active state styles appended)
+  - vector_graph/api/static/graph.js (initResize() with makeDraggable, localStorage persistence)
+  - tests/unit/test_web_api.py (TestResizablePanels: 2 tests)
 
 ## Alpha
-- **Status**: in_progress
-- **Task**: T1+T2 — ChangeTracker + SSE Server for vector-graph v0.4.0
+- **Status**: done
+- **Task**: Add visualization mode selector UI + keyboard shortcuts to frontend
+- **Branch**: feat/alpha-mode-selector-ui
+- **Result**: 11 new tests (TDD RED->GREEN), 69/69 in test_web_api.py, zero regressions
+- **Files modified**:
+  - vector_graph/api/static/index.html (mode-selector div with Arch/Logic/Deep buttons + topbar-stats span)
+  - vector_graph/api/static/graph.css (#mode-selector flex, .mode-btn, .mode-btn:hover, .mode-btn.active styles)
+  - vector_graph/api/static/graph.js (currentMode state var, switchMode() function, loadData() mode param, keyboard shortcuts 1/2/3, updateStats() topbar-stats target)
+  - tests/unit/test_web_api.py (TestModeSelectorUI: 11 tests)
+
+## Alpha (prev)
+- **Status**: done
+- **Task**: Add visualization mode filtering to build_graph_data + HTTP endpoint
+- **Branch**: feat/alpha-viz-mode-filtering
+- **Result**: 8 new tests (TDD RED->GREEN), 56/56 in test_web_api.py, zero regressions
+- **Files modified**: web_server.py (_MODE_LABELS/_MODE_EDGES/_MODE_MAX_NODES; build_graph_data mode param, label/edge/architecture enrichment; /api/data handler mode parsing); test_web_api.py (TestVisualizationModes 8 tests)
+- **Previous task**: Extract inline HTML/CSS/JS from web_server.py into static files
+- **Result**: 683/683 tests pass, zero regressions
+- **Files created**:
+  - vector_graph/api/static/graph.css (~100 lines CSS)
+  - vector_graph/api/static/graph.js (~900 lines JS)
+  - vector_graph/api/static/index.html (HTML shell with {{GRAPH_CSS}}/{{GRAPH_JS}} placeholders)
+- **Files modified**:
+  - vector_graph/api/web_server.py (replaced 1665-line _HTML r-string with _STATIC_DIR + _load_html() + _HTML = _load_html())
+- **Previous Task**: Create examples/taskflow — demo project showcasing all vector-graph features
+- **Branch**: feat/alpha-taskflow-example
+- **Result**: 71/71 tests pass, all vector-graph features verified working
+- **Files created**:
+  - examples/taskflow/taskflow/ (20 files: models, engine, storage, api, utils)
+  - examples/taskflow/tests/ (5 test files, 71 tests)
+  - examples/taskflow/README.md
+- **Features verified**:
+  - Cycles: notifier.py <-> task_engine.py (intentional circular dep)
+  - Orphan: format_iso8601_extended() detected
+  - God class: MetricsCollector in taskflow/utils (30+ methods)
+  - High complexity: scheduler.schedule_tasks() (15+ branches)
+  - Class hierarchy: StorageBackend -> InMemoryStore, FileStore
+  - Cross-module calls: engine -> models, storage, utils
+  - 6 nebulae: models, engine, storage, api, utils, tests
+- **Task**: T4 — Browser Change Animations + Timeline Tab for vector-graph v0.4.0
+- **Branch**: feat/alpha-sse-browser-timeline
+- **Result**: 3 new tests (TDD RED->GREEN), 668 total pass (22 pre-existing T3/TUI failures), zero regressions
+- **Files modified**:
+  - vector_graph/api/web_server.py (Changes tab HTML: tab button + panel-changes div; JS: changeHistory, initSSE, handleChangeEvent, animatePulse, animateNebulaBreathe, updateChangesPanel, highlightChangeNodes; updateChangesPanel() call in loadData())
+  - tests/unit/test_web_api.py (+3 tests: TestSSEAndChangesTimeline — sse_event_source, changes_tab, pulse_animation)
+- **Previous Task**: T1+T2 — ChangeTracker + SSE Server for vector-graph v0.4.0
 - **Branch**: feat/alpha-change-tracker-sse
+- **Result**: 44 new tests (TDD RED->GREEN), 638/639 pass (1 pre-existing Beta T3 failure), zero regressions
+- **Files created**:
+  - vector_graph/watch/change_tracker.py (ChangeEvent frozen dataclass, ChangeTracker: snapshot/record/ring-buffer/session-summary/listeners)
+  - vector_graph/api/sse_server.py (format_sse_event, SSEBroadcaster: thread-safe add/remove/push with full-queue pruning)
+  - tests/unit/test_change_tracker.py (24 tests)
+  - tests/unit/test_sse_server.py (20 tests)
+- **Files modified**:
+  - vector_graph/watch/file_watcher.py (ChangeTracker integrated: snapshot before mutation, record after; from_pipeline creates ChangeTracker)
+  - vector_graph/api/web_server.py (serve() accepts change_tracker param; SSEBroadcaster wired; /api/events /api/changes /api/session endpoints added)
 - **Previous Task**: Proper Three.js Nebula Integration
 - **Branch**: feat/alpha-threejs-nebula
 - **Result**: 577/577 tests pass (+9 new tests), zero regressions
@@ -63,6 +109,27 @@
 
 ## Beta
 - **Status**: done
+- **Task**: Enriched change panel UI — expandable diffs, test suggestions, change frequency
+- **Branch**: feat/beta-enriched-change-panel-ui
+- **Result**: 20 new tests (TDD RED->GREEN), 734/734 total pass, zero regressions
+- **Files modified**:
+  - vector_graph/api/static/graph.css (appended: .diff-block, .diff-line-add/del/hdr, .expand-toggle, .source-preview, .test-item, .test-depth, .change-freq)
+  - vector_graph/api/static/graph.js (sessionChangeCount state; handleChangeEvent frequency tracking; toggleDiff, formatDiff, formatDiffRemoved, ordinal, fetchTestSuggestions helpers; showImpactPanel: expandable diffs + source previews + test suggestions section + async fetch)
+  - tests/unit/test_web_api.py (TestEnrichedChangePanel: 20 tests)
+
+## Beta (prev T5)
+- **Status**: done
+- **Task**: T5 — TUI Dashboard + CLI Integration for vector-graph v0.4.0
+- **Branch**: feat/beta-tui-dashboard
+- **Result**: 28 new tests (TDD RED->GREEN), 670/670 total pass, zero regressions
+- **Files created**:
+  - vector_graph/api/tui.py (format_change_event, format_session_summary, run_tui, _run_rich_tui, _run_plain_tui; rich optional with graceful fallback)
+  - tests/unit/test_tui.py (22 tests: importable, format_change_event x11, format_risk_badge x4, format_session_summary x5)
+- **Files modified**:
+  - vector_graph/api/python_api.py (CLI: add --watch + --tui flags; --watch block with GraphWatcher + ChangeTracker; --watch --serve runs web server in daemon thread; --watch --tui runs run_tui; plain --watch prints stdout; existing --serve unchanged)
+  - tests/unit/test_python_api.py (+6 tests: TestCLIWatchTuiFlags — watch/tui flag acceptance, coexistence, main() parser inspection)
+
+## Beta (previous)
 - **Task**: T3 — Smart MCP Tools for vector-graph v0.4.0
 - **Branch**: feat/beta-smart-mcp-tools
 - **Result**: 5 new MCP tools, +25 tests (13 mcp_server + 7 suggest_tests + 5 counted in mcp_server via PROJECT_ROOT), 595/595 pass, zero regressions

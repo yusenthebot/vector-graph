@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vector-graph</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css">
+<style>
+{{GRAPH_CSS}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1 title="vector-graph — real-time code knowledge graph for vibe coding">vector-graph</h1>
+      <div id="mode-selector" title="Visualization granularity — controls which node types and edge types are shown">
+        <button class="mode-btn" data-mode="architecture" onclick="switchMode('architecture')" title="Architecture view: Only file nodes + import edges. See how modules depend on each other. (~50-100 nodes) [Key: 1]">Arch</button>
+        <button class="mode-btn active" data-mode="logic" onclick="switchMode('logic')" title="Logic view: Files, functions, classes, methods + call/import/extends edges. See what calls what. (~200-600 nodes) [Key: 2]">Logic</button>
+        <button class="mode-btn" data-mode="deep" onclick="switchMode('deep')" title="Deep view: All node types including variables, properties, decorators + all edge types. Full data flow picture. (~600-2000 nodes) [Key: 3]">Deep</button>
+      </div>
+      <div class="search-wrap">
+        <input id="search" placeholder="Search... (Ctrl+K)" autocomplete="off" title="Search nodes by name — type to filter, click result to fly to node">
+        <div id="search-results"></div>
+      </div>
+    </div>
+    <div class="sidebar-tabs">
+      <div class="sidebar-tab active" onclick="switchTab('explorer')" title="File tree — browse files and symbols in the project">Explorer</div>
+      <div class="sidebar-tab" onclick="switchTab('groups')" title="Nebula groups — click a group to focus the camera on that cluster">Groups</div>
+      <div class="sidebar-tab" onclick="switchTab('filters')" title="Toggle node types and edge types on/off, switch health color mode">Filters</div>
+      <div class="sidebar-tab" onclick="switchTab('changes')" title="Live change feed — shows file modifications detected by the watcher in real-time">Changes</div>
+    </div>
+    <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
+    <div id="panel-groups" class="sidebar-panel" style="padding:6px 12px"></div>
+    <div id="panel-filters" class="sidebar-panel" style="padding:6px 12px"></div>
+    <div id="panel-changes" class="sidebar-panel" style="padding:6px 8px"></div>
+    <div id="sidebar-stats"></div>
+  </div>
+  <div class="resize-handle" id="sidebar-resize" title="Drag to resize sidebar"></div>
+  <div id="graph-container">
+    <div id="topbar">
+      <span id="topbar-stats"></span>
+    </div>
+    <div id="helpbar">
+      <span><kbd>Click</kbd> inspect</span>
+      <span><kbd>Scroll</kbd> zoom</span>
+      <span><kbd>Drag</kbd> rotate</span>
+      <span><kbd>Right-drag</kbd> pan</span>
+      <span><kbd>Esc</kbd> deselect</span>
+      <span><kbd>Group</kbd> click sidebar to focus</span>
+    </div>
+  </div>
+  <div class="resize-handle" id="inspector-resize" title="Drag to resize inspector panel"></div>
+  <aside id="inspector">
+    <div id="insp-header">
+      <span class="type-badge" id="insp-badge"></span>
+      <span id="insp-name"></span>
+      <button id="insp-close" title="Close inspector panel (Esc)">&times;</button>
+    </div>
+    <div id="insp-meta"></div>
+    <div id="insp-body"></div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/three@0.137.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://unpkg.com/three@0.137.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.79.1/dist/3d-force-graph.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script>
+{{GRAPH_JS}}
+</script>
+</body>
+</html>

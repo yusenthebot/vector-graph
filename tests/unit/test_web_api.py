@@ -274,7 +274,7 @@ class TestBuildGraphDataAdditional:
         assert "truncated" in node["source"]
 
     def test_ros2_node_prioritized_before_function(self) -> None:
-        """ROS2Node appears before Function when sort by priority."""
+        """ROS2Node appears before Function when sort by priority (deep mode includes all labels)."""
         g = KnowledgeGraph()
         g.add_node(GraphNode(
             id="fn1",
@@ -286,8 +286,8 @@ class TestBuildGraphDataAdditional:
             label=NodeLabel.ROS2_NODE,
             properties=NodeProperties(name="MyNode", file_path="/node.py"),
         ))
-        data = build_graph_data(g, max_nodes=1)
-        # With max_nodes=1, only the highest priority (ROS2Node) should appear
+        data = build_graph_data(g, max_nodes=1, mode="deep")
+        # With max_nodes=1 and deep mode, only the highest priority (ROS2Node) should appear
         assert len(data["nodes"]) == 1
         assert data["nodes"][0]["label"] == "ROS2Node"
 
@@ -558,3 +558,323 @@ class TestSSEAndChangesTimeline:
         assert 'activeImpactIds' in _HTML
         assert 'clearChangeHighlight' in _HTML
         assert 'focusChange' in _HTML
+
+
+# ---------------------------------------------------------------------------
+# Visualization mode filtering (mode param on build_graph_data)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.level5
+class TestVisualizationModes:
+    def _graph_with_all_labels(self) -> KnowledgeGraph:
+        """Graph with FILE, FUNCTION, CLASS, METHOD, VARIABLE, PROPERTY, DECORATOR."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(id="file1", label=NodeLabel.FILE,
+                             properties=NodeProperties(name="mod.py", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="fn1", label=NodeLabel.FUNCTION,
+                             properties=NodeProperties(name="do_work", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="cls1", label=NodeLabel.CLASS,
+                             properties=NodeProperties(name="MyClass", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="meth1", label=NodeLabel.METHOD,
+                             properties=NodeProperties(name="run", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="var1", label=NodeLabel.VARIABLE,
+                             properties=NodeProperties(name="CONST", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="prop1", label=NodeLabel.PROPERTY,
+                             properties=NodeProperties(name="value", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="dec1", label=NodeLabel.DECORATOR,
+                             properties=NodeProperties(name="cached", file_path="/proj/mod.py")))
+        return g
+
+    def _graph_with_mixed_edges(self) -> KnowledgeGraph:
+        """Graph with FILE nodes and CALLS + IMPORTS edges."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(id="fa", label=NodeLabel.FILE,
+                             properties=NodeProperties(name="a.py", file_path="/proj/a.py")))
+        g.add_node(GraphNode(id="fb", label=NodeLabel.FILE,
+                             properties=NodeProperties(name="b.py", file_path="/proj/b.py")))
+        g.add_edge(Edge(id="e_imp", source_id="fa", target_id="fb",
+                        edge_type=EdgeType.IMPORTS, confidence=1.0))
+        g.add_edge(Edge(id="e_calls", source_id="fa", target_id="fb",
+                        edge_type=EdgeType.CALLS, confidence=0.9))
+        return g
+
+    def test_build_graph_data_architecture_mode_only_files(self) -> None:
+        """architecture mode keeps only FILE label nodes."""
+        data = build_graph_data(self._graph_with_all_labels(), mode="architecture")
+        labels = {n["label"] for n in data["nodes"]}
+        assert labels == {"File"}, f"Expected only File nodes, got {labels}"
+
+    def test_build_graph_data_architecture_mode_only_imports(self) -> None:
+        """architecture mode keeps only IMPORTS edges."""
+        data = build_graph_data(self._graph_with_mixed_edges(), mode="architecture")
+        edge_types = {lnk["type"] for lnk in data["links"]}
+        assert EdgeType.CALLS.value not in edge_types
+        assert EdgeType.IMPORTS.value in edge_types
+
+    def test_build_graph_data_logic_mode_includes_functions(self) -> None:
+        """logic mode includes FILE, FUNCTION, CLASS, METHOD nodes."""
+        data = build_graph_data(self._graph_with_all_labels(), mode="logic")
+        labels = {n["label"] for n in data["nodes"]}
+        assert NodeLabel.FILE.value in labels
+        assert NodeLabel.FUNCTION.value in labels
+        assert NodeLabel.CLASS.value in labels
+        assert NodeLabel.METHOD.value in labels
+
+    def test_build_graph_data_logic_mode_excludes_variables(self) -> None:
+        """logic mode excludes VARIABLE, PROPERTY, DECORATOR nodes."""
+        data = build_graph_data(self._graph_with_all_labels(), mode="logic")
+        labels = {n["label"] for n in data["nodes"]}
+        assert NodeLabel.VARIABLE.value not in labels
+        assert NodeLabel.PROPERTY.value not in labels
+        assert NodeLabel.DECORATOR.value not in labels
+
+    def test_build_graph_data_deep_mode_includes_all(self) -> None:
+        """deep mode includes all node types (VARIABLE, PROPERTY, DECORATOR present)."""
+        data = build_graph_data(self._graph_with_all_labels(), mode="deep")
+        labels = {n["label"] for n in data["nodes"]}
+        assert NodeLabel.VARIABLE.value in labels
+        assert NodeLabel.PROPERTY.value in labels
+        assert NodeLabel.DECORATOR.value in labels
+
+    def test_build_graph_data_deep_mode_max_nodes_2000(self) -> None:
+        """deep mode allows up to 2000 nodes when max_nodes not specified."""
+        from vector_graph.api.web_server import _MODE_MAX_NODES
+        assert _MODE_MAX_NODES["deep"] == 2000
+
+    def test_build_graph_data_default_mode_is_logic(self) -> None:
+        """Calling build_graph_data with no mode argument behaves like mode='logic'."""
+        g = self._graph_with_all_labels()
+        data_default = build_graph_data(g)
+        data_logic = build_graph_data(g, mode="logic")
+        default_labels = {n["label"] for n in data_default["nodes"]}
+        logic_labels = {n["label"] for n in data_logic["nodes"]}
+        assert default_labels == logic_labels
+
+    def test_build_graph_data_architecture_file_node_has_symbol_count(self) -> None:
+        """In architecture mode, FILE nodes carry function_count and class_count."""
+        g = KnowledgeGraph()
+        g.add_node(GraphNode(id="file1", label=NodeLabel.FILE,
+                             properties=NodeProperties(name="mod.py", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="fn1", label=NodeLabel.FUNCTION,
+                             properties=NodeProperties(name="foo", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="fn2", label=NodeLabel.FUNCTION,
+                             properties=NodeProperties(name="bar", file_path="/proj/mod.py")))
+        g.add_node(GraphNode(id="cls1", label=NodeLabel.CLASS,
+                             properties=NodeProperties(name="Engine", file_path="/proj/mod.py")))
+        data = build_graph_data(g, mode="architecture")
+        file_node = next(n for n in data["nodes"] if n["label"] == "File")
+        assert file_node["function_count"] == 2
+        assert file_node["class_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Resizable panels
+# ---------------------------------------------------------------------------
+
+class TestResizablePanels:
+    def test_html_contains_sidebar_resize_handle(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="sidebar-resize"' in _HTML
+        assert 'resize-handle' in _HTML
+
+    def test_html_contains_inspector_resize_handle(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'id="inspector-resize"' in _HTML
+
+
+# ---------------------------------------------------------------------------
+# Mode selector UI
+# ---------------------------------------------------------------------------
+
+class TestModeSelectorUI:
+    def test_html_contains_mode_selector_div(self):
+        """HTML contains the mode-selector container div."""
+        from vector_graph.api.web_server import _HTML
+        assert 'id="mode-selector"' in _HTML
+
+    def test_html_contains_all_three_mode_buttons(self):
+        """HTML has buttons for architecture, logic, and deep modes."""
+        from vector_graph.api.web_server import _HTML
+        assert 'data-mode="architecture"' in _HTML
+        assert 'data-mode="logic"' in _HTML
+        assert 'data-mode="deep"' in _HTML
+
+    def test_html_logic_button_is_default_active(self):
+        """The logic mode button starts with class active (default mode)."""
+        from vector_graph.api.web_server import _HTML
+        # The logic button must have both 'mode-btn active' and 'data-mode="logic"'
+        assert 'class="mode-btn active" data-mode="logic"' in _HTML
+
+    def test_html_contains_topbar_stats_span(self):
+        """HTML contains the topbar-stats span for node/link counts."""
+        from vector_graph.api.web_server import _HTML
+        assert 'id="topbar-stats"' in _HTML
+
+    def test_js_contains_current_mode_state(self):
+        """JS declares currentMode state variable with localStorage fallback."""
+        from vector_graph.api.web_server import _HTML
+        assert "currentMode" in _HTML
+        assert "localStorage.getItem('vg-mode')" in _HTML
+
+    def test_js_contains_switch_mode_function(self):
+        """JS defines switchMode() for mode switching."""
+        from vector_graph.api.web_server import _HTML
+        assert "function switchMode(" in _HTML
+
+    def test_js_load_data_uses_current_mode(self):
+        """loadData() pre-caches all modes and uses modeCache[currentMode]."""
+        from vector_graph.api.web_server import _HTML
+        assert "modeCache[currentMode]" in _HTML
+
+    def test_js_contains_keyboard_shortcuts(self):
+        """Keyboard shortcuts 1/2/3 map to architecture/logic/deep modes."""
+        from vector_graph.api.web_server import _HTML
+        assert "switchMode('architecture')" in _HTML
+        assert "switchMode('logic')" in _HTML
+        assert "switchMode('deep')" in _HTML
+        # Triggered only when not in an input field
+        assert "tagName !== 'INPUT'" in _HTML
+
+    def test_js_update_stats_writes_topbar_stats(self):
+        """updateStats() targets topbar-stats element, not topbar innerHTML."""
+        from vector_graph.api.web_server import _HTML
+        assert "'topbar-stats'" in _HTML
+        # Must NOT overwrite the whole topbar (no topbar.innerHTML assignment)
+        assert "getElementById('topbar').innerHTML" not in _HTML
+
+    def test_css_contains_mode_btn_styles(self):
+        """CSS defines .mode-btn and .mode-btn.active rules."""
+        from vector_graph.api.web_server import _HTML
+        assert ".mode-btn" in _HTML
+        assert ".mode-btn.active" in _HTML
+        assert ".mode-btn:hover" in _HTML
+
+    def test_css_contains_mode_selector_flex(self):
+        """CSS defines #mode-selector as flex container."""
+        from vector_graph.api.web_server import _HTML
+        assert "#mode-selector" in _HTML
+        assert "display:flex" in _HTML
+
+
+# ---------------------------------------------------------------------------
+# Enriched change panel: diffs, test suggestions, change frequency
+# ---------------------------------------------------------------------------
+
+class TestEnrichedChangePanel:
+    def test_css_contains_diff_block_styles(self):
+        """CSS defines .diff-block rule with collapsed variant."""
+        from vector_graph.api.web_server import _HTML
+        assert ".diff-block" in _HTML
+        assert ".diff-block.collapsed" in _HTML
+
+    def test_css_contains_diff_line_color_classes(self):
+        """CSS defines diff line color classes for add, del, and header."""
+        from vector_graph.api.web_server import _HTML
+        assert ".diff-line-add" in _HTML
+        assert ".diff-line-del" in _HTML
+        assert ".diff-line-hdr" in _HTML
+
+    def test_css_contains_collapse_toggle_styles(self):
+        """CSS defines .collapse-toggle with hover state."""
+        from vector_graph.api.web_server import _HTML
+        assert ".collapse-toggle" in _HTML
+        assert ".collapse-toggle:hover" in _HTML
+
+    def test_css_contains_source_preview_styles(self):
+        """CSS defines .source-preview and .source-preview.open."""
+        from vector_graph.api.web_server import _HTML
+        assert ".source-preview" in _HTML
+        assert ".source-preview.open" in _HTML
+
+    def test_css_contains_test_item_styles(self):
+        """CSS defines .test-item and .test-depth for test suggestion display."""
+        from vector_graph.api.web_server import _HTML
+        assert ".test-item" in _HTML
+        assert ".test-depth" in _HTML
+
+    def test_css_contains_change_freq_badge(self):
+        """CSS defines .change-freq for the frequency badge."""
+        from vector_graph.api.web_server import _HTML
+        assert ".change-freq" in _HTML
+
+    def test_js_contains_session_change_count_state(self):
+        """JS declares sessionChangeCount state variable."""
+        from vector_graph.api.web_server import _HTML
+        assert "sessionChangeCount" in _HTML
+
+    def test_js_handle_change_event_tracks_frequency(self):
+        """handleChangeEvent tracks per-symbol change frequency."""
+        from vector_graph.api.web_server import _HTML
+        assert "sessionChangeCount[name]" in _HTML
+        assert "nodes_added" in _HTML
+        assert "nodes_modified" in _HTML
+
+    def test_js_contains_toggle_diff_function(self):
+        """JS defines toggleDiff() helper for expand/collapse."""
+        from vector_graph.api.web_server import _HTML
+        assert "function toggleDiff(" in _HTML
+        assert "classList.toggle('open')" in _HTML
+
+    def test_js_contains_format_diff_function(self):
+        """JS defines formatDiff() for unified diff coloring."""
+        from vector_graph.api.web_server import _HTML
+        assert "function formatDiff(" in _HTML
+        assert "diff-line-add" in _HTML
+        assert "diff-line-del" in _HTML
+        assert "diff-line-hdr" in _HTML
+
+    def test_js_contains_format_diff_removed_function(self):
+        """JS defines formatDiffRemoved() for all-red removed source."""
+        from vector_graph.api.web_server import _HTML
+        assert "function formatDiffRemoved(" in _HTML
+
+    def test_js_contains_ordinal_function(self):
+        """JS defines ordinal() for 1st/2nd/3rd display."""
+        from vector_graph.api.web_server import _HTML
+        assert "function ordinal(" in _HTML
+
+    def test_js_contains_fetch_test_suggestions_function(self):
+        """JS defines fetchTestSuggestions() async function."""
+        from vector_graph.api.web_server import _HTML
+        assert "async function fetchTestSuggestions(" in _HTML
+        assert "/api/suggest-tests?name=" in _HTML
+
+    def test_js_fetch_test_suggestions_deduplicates(self):
+        """fetchTestSuggestions deduplicates by test_file::test_name key."""
+        from vector_graph.api.web_server import _HTML
+        assert "test_file + '::' + s.test_name" in _HTML
+
+    def test_js_show_impact_panel_uses_diffs_field(self):
+        """showImpactPanel reads change.diffs for diff text."""
+        from vector_graph.api.web_server import _HTML
+        assert "change.diffs" in _HTML
+
+    def test_js_show_impact_panel_renders_diff_blocks(self):
+        """showImpactPanel renders .diff-block elements with toggleDiff."""
+        from vector_graph.api.web_server import _HTML
+        assert "diff-block" in _HTML
+        assert "toggleDiff(" in _HTML
+
+    def test_js_show_impact_panel_renders_source_previews(self):
+        """showImpactPanel renders .source-preview for Calls/Depended On By."""
+        from vector_graph.api.web_server import _HTML
+        assert "source-preview" in _HTML
+        assert "srcNode.source" in _HTML
+
+    def test_js_show_impact_panel_shows_test_suggestions_section(self):
+        """showImpactPanel adds test-suggestions-section and async fetch."""
+        from vector_graph.api.web_server import _HTML
+        assert "test-suggestions-section" in _HTML
+        assert "test-suggestions-loading" in _HTML
+        assert "fetchTestSuggestions(" in _HTML
+
+    def test_js_show_impact_panel_shows_change_freq_badge(self):
+        """showImpactPanel shows change-freq badge when freq > 1."""
+        from vector_graph.api.web_server import _HTML
+        assert "change-freq" in _HTML
+        assert "ordinal(freq)" in _HTML
+
+    def test_js_expand_toggle_stops_propagation_for_calls(self):
+        """Expand toggle in Calls/Depended On By uses event.stopPropagation."""
+        from vector_graph.api.web_server import _HTML
+        assert "event.stopPropagation()" in _HTML

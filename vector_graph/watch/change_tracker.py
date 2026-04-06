@@ -2,18 +2,23 @@
 
 Records before/after snapshots around graph mutations to produce structured
 ChangeEvent objects that describe what nodes were added, modified, or removed,
-along with blast-radius impact metadata.
+along with blast-radius impact metadata and unified source diffs.
+
+v0.4.1: Node ID tracking + AST signature comparison for real modification detection.
+v0.4.2: Source code snapshots + unified diffs per changed symbol.
 """
 
 from __future__ import annotations
 
+import difflib
 import json
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
-from vector_graph._types import NodeLabel
+from vector_graph._types import GraphNode, NodeLabel
 from vector_graph.graph.knowledge_graph import KnowledgeGraph
 
 
@@ -27,9 +32,15 @@ class ChangeEvent:
     nodes_added: tuple[str, ...] = ()
     nodes_modified: tuple[str, ...] = ()
     nodes_removed: tuple[str, ...] = ()
+    node_ids_added: tuple[str, ...] = ()
+    node_ids_modified: tuple[str, ...] = ()
+    node_ids_removed: tuple[str, ...] = ()
     risk: str = "LOW"
     affected_count: int = 0
     affected_groups: tuple[str, ...] = ()
+    # Unified diffs (or full source) per changed symbol name.
+    # Each entry: (symbol_name, diff_string)
+    diffs: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dict representation."""
@@ -40,16 +51,52 @@ class ChangeEvent:
             "nodes_added": list(self.nodes_added),
             "nodes_modified": list(self.nodes_modified),
             "nodes_removed": list(self.nodes_removed),
+            "node_ids_added": list(self.node_ids_added),
+            "node_ids_modified": list(self.node_ids_modified),
+            "node_ids_removed": list(self.node_ids_removed),
             "impact": {
                 "risk": self.risk,
                 "affected_count": self.affected_count,
                 "affected_groups": list(self.affected_groups),
             },
+            "diffs": {name: diff for name, diff in self.diffs},
         }
 
 
 # Labels that represent structural meta-nodes, not code symbols
 _SKIP_LABELS = frozenset({NodeLabel.FILE, NodeLabel.FOLDER})
+
+
+def _read_source_lines(file_path: str, start: int, end: int) -> str:
+    """Read source lines [start, end] (1-based, inclusive) from file.
+
+    Returns empty string on any I/O error or if line numbers are invalid.
+    """
+    try:
+        lines = Path(file_path).read_text(encoding="utf-8", errors="replace").splitlines()
+        s = max(0, start - 1)
+        e = min(len(lines), end)
+        return "\n".join(lines[s:e])
+    except OSError:
+        return ""
+
+
+def _node_signature(node: GraphNode) -> str:
+    """Compute a content-based signature for detecting real modifications.
+
+    Compares: parameter count, parameter names, return type, decorators,
+    and line span (end - start). If any of these change, the function
+    is considered "modified".
+    """
+    p = node.properties
+    parts = [
+        str(p.parameter_count or 0),
+        ",".join(p.parameters),
+        str(p.return_type or ""),
+        ",".join(p.decorators),
+        str((p.end_line or 0) - (p.start_line or 0)),
+    ]
+    return "|".join(parts)
 
 
 class ChangeTracker:
@@ -67,8 +114,8 @@ class ChangeTracker:
         self._graph = graph
         self._events: deque[ChangeEvent] = deque(maxlen=self.MAX_EVENTS)
         self._session_start: float = time.time()
-        # Before-snapshot: file_path -> set of (name, label_value)
-        self._file_snapshot: dict[str, set[tuple[str, str]]] = {}
+        # Before-snapshot: file_path -> {(name, label_value): (node_id, sig_hash, source_lines)}
+        self._file_snapshot: dict[str, dict[tuple[str, str], tuple[str, str, str]]] = {}
         self._listeners: list[Callable[[ChangeEvent], None]] = []
 
     # ------------------------------------------------------------------
@@ -79,51 +126,148 @@ class ChangeTracker:
         """Record the current set of symbols for file_path.
 
         Must be called BEFORE the graph is modified (nodes removed / re-added).
+        Captures node IDs, AST signatures, and source code for diff computation.
+
+        Source is read from disk using start_line/end_line on each node.
+        File content is cached to avoid redundant disk reads per snapshot call.
         """
-        nodes: set[tuple[str, str]] = set()
+        snapshot: dict[tuple[str, str], tuple[str, str, str]] = {}
+        # Cache file content per file_path to avoid reading the same file
+        # multiple times within a single snapshot call.
+        _file_content_cache: dict[str, list[str]] = {}
+
         for node in self._graph.get_nodes_by_file(file_path):
             if node.label not in _SKIP_LABELS:
-                nodes.add((node.properties.name, node.label.value))
-        self._file_snapshot[file_path] = nodes
+                key = (node.properties.name, node.label.value)
+                sig = _node_signature(node)
+
+                # Extract source if line info and file path are available
+                source = ""
+                node_fp = node.properties.file_path or ""
+                start = node.properties.start_line
+                end = node.properties.end_line
+                if node_fp and start and end:
+                    source = _read_source_lines(node_fp, start, end)
+
+                snapshot[key] = (node.id, sig, source)
+        self._file_snapshot[file_path] = snapshot
 
     def record_change(self, file_path: str, change_type: str) -> ChangeEvent:
         """Compare current graph state with snapshot and emit a ChangeEvent.
 
         Consumes and removes the snapshot for file_path.
+        Uses AST signature comparison to detect real modifications
+        (not just surviving names). Computes unified diffs for changed symbols.
         """
-        before: set[tuple[str, str]] = self._file_snapshot.pop(file_path, set())
+        before = self._file_snapshot.pop(file_path, {})
 
-        after: set[tuple[str, str]] = set()
+        after: dict[tuple[str, str], tuple[str, str, str]] = {}
         if change_type != "deleted":
+            # Read current source per node; cache file content for this pass
+            _file_content_cache: dict[str, list[str]] = {}
             for node in self._graph.get_nodes_by_file(file_path):
                 if node.label not in _SKIP_LABELS:
-                    after.add((node.properties.name, node.label.value))
+                    key = (node.properties.name, node.label.value)
+                    sig = _node_signature(node)
 
-        added: set[tuple[str, str]] = after - before
-        removed: set[tuple[str, str]] = before - after
+                    source = ""
+                    node_fp = node.properties.file_path or ""
+                    start = node.properties.start_line
+                    end = node.properties.end_line
+                    if node_fp and start and end:
+                        if node_fp not in _file_content_cache:
+                            try:
+                                _file_content_cache[node_fp] = Path(node_fp).read_text(
+                                    encoding="utf-8", errors="replace"
+                                ).splitlines()
+                            except OSError:
+                                _file_content_cache[node_fp] = []
+                        lines = _file_content_cache[node_fp]
+                        s = max(0, start - 1)
+                        e = min(len(lines), end)
+                        source = "\n".join(lines[s:e])
 
-        # Modified = names present in both snapshots (surviving across modify)
-        modified: set[tuple[str, str]] = set()
+                    after[key] = (node.id, sig, source)
+
+        before_keys = set(before.keys())
+        after_keys = set(after.keys())
+
+        added_keys = after_keys - before_keys
+        removed_keys = before_keys - after_keys
+        common_keys = before_keys & after_keys
+
+        # Modified = common keys where AST signature actually changed
+        modified_keys: set[tuple[str, str]] = set()
         if change_type == "modified":
-            before_names = {n for n, _ in before}
-            common_names = {n for n, _ in after} & before_names
-            modified = {(n, l) for n, l in after if n in common_names}
+            for key in common_keys:
+                _, before_sig, _ = before[key]
+                _, after_sig, _ = after[key]
+                if before_sig != after_sig:
+                    modified_keys.add(key)
 
-        # Compute blast-radius impact for all changed nodes
+        # Build name lists (backward compat) and node ID lists
+        nodes_added = tuple(sorted(name for name, _ in added_keys))
+        nodes_modified = tuple(sorted(name for name, _ in modified_keys))
+        nodes_removed = tuple(sorted(name for name, _ in removed_keys))
+
+        node_ids_added = tuple(sorted(after[k][0] for k in added_keys))
+        node_ids_modified = tuple(sorted(after[k][0] for k in modified_keys))
+        node_ids_removed = tuple(sorted(before[k][0] for k in removed_keys))
+
+        # Compute unified diffs for changed symbols
+        diffs_list: list[tuple[str, str]] = []
+
+        for key in sorted(modified_keys):
+            name, _ = key
+            _, _, old_source = before[key]
+            _, _, new_source = after[key]
+            if old_source and new_source:
+                diff_lines = list(difflib.unified_diff(
+                    old_source.splitlines(keepends=True),
+                    new_source.splitlines(keepends=True),
+                    fromfile="before",
+                    tofile="after",
+                    lineterm="",
+                ))
+                if diff_lines:
+                    diffs_list.append((name, "\n".join(diff_lines)))
+            elif new_source:
+                diffs_list.append((name, new_source))
+            elif old_source:
+                diffs_list.append((name, old_source))
+
+        for key in sorted(added_keys):
+            name, _ = key
+            _, _, new_source = after[key]
+            if new_source:
+                diffs_list.append((name, new_source))
+
+        for key in sorted(removed_keys):
+            name, _ = key
+            _, _, old_source = before[key]
+            if old_source:
+                diffs_list.append((name, old_source))
+
+        # Compute blast-radius impact for added + modified nodes
+        changed_ids = {after[k][0] for k in added_keys | modified_keys}
         risk, affected_count, affected_groups = self._compute_impact(
-            file_path, added | modified | removed
+            file_path, changed_ids
         )
 
         event = ChangeEvent(
             timestamp=time.time(),
             file_path=file_path,
             change_type=change_type,
-            nodes_added=tuple(sorted(n for n, _ in added)),
-            nodes_modified=tuple(sorted(n for n, _ in modified)),
-            nodes_removed=tuple(sorted(n for n, _ in removed)),
+            nodes_added=nodes_added,
+            nodes_modified=nodes_modified,
+            nodes_removed=nodes_removed,
+            node_ids_added=node_ids_added,
+            node_ids_modified=node_ids_modified,
+            node_ids_removed=node_ids_removed,
             risk=risk,
             affected_count=affected_count,
             affected_groups=tuple(sorted(affected_groups)),
+            diffs=tuple(diffs_list),
         )
         self._events.append(event)
         self._notify(event)
@@ -176,39 +320,37 @@ class ChangeTracker:
     def _compute_impact(
         self,
         file_path: str,
-        changed_symbols: set[tuple[str, str]],
+        changed_node_ids: set[str],
     ) -> tuple[str, int, set[str]]:
-        """Run blast-radius analysis for all changed node names.
+        """Run blast-radius analysis for changed nodes by ID.
 
         Returns (risk, max_affected_count, affected_groups).
         """
-        if not changed_symbols:
+        if not changed_node_ids:
             return "LOW", 0, set()
 
         from vector_graph.analysis.impact import analyze_impact
 
-        changed_names = {n for n, _ in changed_symbols}
         risk = "LOW"
         affected_count = 0
         affected_groups: set[str] = set()
 
         _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
-        for node in self._graph.iter_nodes():
-            if (
-                node.properties.name in changed_names
-                and node.properties.file_path == file_path
-            ):
-                result = analyze_impact(
-                    self._graph, node.id, direction="upstream", max_depth=2
-                )
-                affected_count = max(affected_count, result.impacted_count)
-                if _RISK_ORDER.get(result.risk, 0) > _RISK_ORDER.get(risk, 0):
-                    risk = result.risk
-                for entry in result.entries:
-                    parts = entry.file_path.replace("\\", "/").split("/") if entry.file_path else []
-                    if len(parts) >= 2:
-                        affected_groups.add("/".join(parts[-2:]))
+        for node_id in changed_node_ids:
+            node = self._graph.get_node(node_id)
+            if node is None:
+                continue
+            result = analyze_impact(
+                self._graph, node.id, direction="upstream", max_depth=2
+            )
+            affected_count = max(affected_count, result.impacted_count)
+            if _RISK_ORDER.get(result.risk, 0) > _RISK_ORDER.get(risk, 0):
+                risk = result.risk
+            for entry in result.entries:
+                parts = entry.file_path.replace("\\", "/").split("/") if entry.file_path else []
+                if len(parts) >= 2:
+                    affected_groups.add("/".join(parts[-2:]))
 
         return risk, affected_count, affected_groups
 
