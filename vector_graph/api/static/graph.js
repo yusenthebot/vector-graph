@@ -1656,22 +1656,26 @@ async function fetchTestSuggestions(names) {
 }
 
 // Build 2D impact subgraph data (nodes + links) for canvas rendering
+// 2D impact graph — progressive disclosure: start with changed nodes only,
+// click to expand neighbors. Labels on hover, not rendered permanently.
+let _expandedNode2d = null; // currently expanded node in 2D graph
+
 function buildImpactSubgraph() {
   const gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
-  const subNodes = new Map(); // id -> node data
+  const subNodes = new Map();
   const subLinks = [];
 
-  // 1. Add changed nodes
+  // 1. Only changed nodes initially (clean, readable)
   gData.nodes.forEach(n => {
     if (activeChangeIds.has(n.id)) {
       subNodes.set(n.id, {...n, _role: 'changed'});
     }
   });
 
-  // 2. Add direct callers and callees (1 hop from changed nodes)
-  activeChangeIds.forEach(nid => {
-    // Callers (incoming CALLS/IMPORTS)
-    (linkIndex.to[nid] || []).forEach(l => {
+  // 2. If a node is expanded, add its 1-hop neighbors
+  if (_expandedNode2d) {
+    const eid = _expandedNode2d;
+    (linkIndex.to[eid] || []).forEach(l => {
       if (l.type !== 'CALLS' && l.type !== 'IMPORTS') return;
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       if (!subNodes.has(sid)) {
@@ -1679,8 +1683,7 @@ function buildImpactSubgraph() {
         if (src) subNodes.set(sid, {...src, _role: 'caller'});
       }
     });
-    // Callees (outgoing CALLS/IMPORTS)
-    (linkIndex.from[nid] || []).forEach(l => {
+    (linkIndex.from[eid] || []).forEach(l => {
       if (l.type !== 'CALLS' && l.type !== 'IMPORTS') return;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
       if (!subNodes.has(tid)) {
@@ -1688,24 +1691,11 @@ function buildImpactSubgraph() {
         if (tgt) subNodes.set(tid, {...tgt, _role: 'callee'});
       }
     });
-  });
-
-  // 3. Cap at 50 nodes — prioritize changed, then by connection count
-  let nodes = [...subNodes.values()];
-  if (nodes.length > 50) {
-    const changed = nodes.filter(n => n._role === 'changed');
-    const rest = nodes.filter(n => n._role !== 'changed')
-      .sort((a, b) => {
-        const ac = (linkIndex.from[a.id]||[]).length + (linkIndex.to[a.id]||[]).length;
-        const bc = (linkIndex.from[b.id]||[]).length + (linkIndex.to[b.id]||[]).length;
-        return bc - ac;
-      });
-    nodes = [...changed, ...rest.slice(0, 50 - changed.length)];
   }
 
-  const nodeIds = new Set(nodes.map(n => n.id));
+  const nodeIds = new Set(subNodes.keys());
 
-  // 4. Add edges between included nodes
+  // 3. Edges between included nodes
   gData.links.forEach(l => {
     const sid = typeof l.source === 'object' ? l.source.id : l.source;
     const tid = typeof l.target === 'object' ? l.target.id : l.target;
@@ -1715,16 +1705,77 @@ function buildImpactSubgraph() {
   });
 
   return {
-    nodes: nodes.map(n => ({
+    nodes: [...subNodes.values()].map(n => ({
       id: n.id,
       name: n.name,
       label: n.label,
       file: (n.file || '').split('/').pop(),
+      fullFile: n.file || '',
       _role: n._role,
+      _expanded: n.id === _expandedNode2d,
+      _callerCount: (linkIndex.to[n.id] || []).filter(l => l.type === 'CALLS').length,
+      _calleeCount: (linkIndex.from[n.id] || []).filter(l => l.type === 'CALLS').length,
       group: n.group,
+      source: n.source || '',
     })),
     links: subLinks,
   };
+}
+
+function expand2dNode(nodeId) {
+  _expandedNode2d = (_expandedNode2d === nodeId) ? null : nodeId; // toggle
+  refreshImpactGraph2d();
+}
+
+function refreshImpactGraph2d() {
+  const container = document.getElementById('impact-graph-container');
+  if (!container || !impactGraph2d) return;
+  const subgraph = buildImpactSubgraph();
+  impactGraph2d.graphData(subgraph);
+  // Update detail panel
+  updateNodeDetail2d(_expandedNode2d);
+}
+
+function updateNodeDetail2d(nodeId) {
+  const detailEl = document.getElementById('impact-node-detail');
+  if (!detailEl) return;
+  if (!nodeId) { detailEl.innerHTML = '<span style="color:var(--overlay0);font-size:10px">Click a node to see details</span>'; return; }
+
+  const gData = graph3d ? graph3d.graphData() : {nodes:[]};
+  const nd = gData.nodes.find(n => n.id === nodeId);
+  if (!nd) { detailEl.innerHTML = ''; return; }
+
+  const callers = (linkIndex.to[nodeId] || []).filter(l => l.type === 'CALLS').map(l => {
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    return gData.nodes.find(n => n.id === sid);
+  }).filter(Boolean).slice(0, 8);
+
+  const callees = (linkIndex.from[nodeId] || []).filter(l => l.type === 'CALLS').map(l => {
+    const tid = typeof l.target === 'object' ? l.target.id : l.target;
+    return gData.nodes.find(n => n.id === tid);
+  }).filter(Boolean).slice(0, 8);
+
+  let h = '<div style="font-size:11px;font-weight:bold;color:var(--text);margin-bottom:4px">' + escHtml(nd.name) + '</div>';
+  h += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:6px">' + escHtml((nd.file||'').split('/').pop()) + ' &middot; ' + nd.label + '</div>';
+
+  if (callers.length > 0) {
+    h += '<div style="font-size:9px;color:var(--overlay0);margin-bottom:2px">Called by:</div>';
+    callers.forEach(c => {
+      h += '<div style="font-size:10px;padding:1px 0;cursor:pointer;color:var(--peach)" onclick="previewNode(\'' + c.id + '\')">&larr; ' + c.name + '</div>';
+    });
+  }
+  if (callees.length > 0) {
+    h += '<div style="font-size:9px;color:var(--overlay0);margin-top:4px;margin-bottom:2px">Calls:</div>';
+    callees.forEach(c => {
+      h += '<div style="font-size:10px;padding:1px 0;cursor:pointer;color:var(--blue)" onclick="previewNode(\'' + c.id + '\')">&rarr; ' + c.name + '</div>';
+    });
+  }
+
+  if (nd.source) {
+    h += '<div style="margin-top:6px"><div class="diff-block" style="max-height:120px;font-size:9px">' + formatSourceHighlighted(nd.source) + '</div></div>';
+  }
+
+  detailEl.innerHTML = h;
 }
 
 function focusChangeFile(fname) {
@@ -1977,15 +2028,17 @@ function showImpactPanel(change) {
     if (change.impact) html += ' &middot; ' + change.impact.affected_count + ' in blast radius';
     html += '</div></div></div>';
 
-    // ── 2D Impact Graph ──
+    // ── 2D Impact Graph (progressive disclosure) ──
     if (activeChangeIds.size > 0 && typeof ForceGraph !== 'undefined') {
-      html += '<div class="insp-section"><h4>Impact Graph</h4>';
+      html += '<div class="insp-section"><h4>Impact Graph <span style="font-size:8px;color:var(--overlay0);font-weight:normal;text-transform:none">&mdash; click node to expand</span></h4>';
       html += '<div id="impact-graph-container">';
       html += '<div class="impact-graph-legend">';
       html += '<span class="legend-changed">changed</span>';
       html += '<span class="legend-caller">callers</span>';
       html += '<span class="legend-callee">callees</span>';
-      html += '</div></div></div>';
+      html += '</div></div>';
+      html += '<div id="impact-node-detail" style="padding:6px 0;min-height:24px"><span style="color:var(--overlay0);font-size:10px">Click a node to see details</span></div>';
+      html += '</div>';
     }
 
     // Removed — show old code + orphaned callers
@@ -2168,40 +2221,62 @@ function showImpactPanel(change) {
     const width = container.clientWidth;
     const height = 280;
 
+    _expandedNode2d = null;
+
     impactGraph2d = ForceGraph()(container)
       .graphData(subgraph)
       .width(width)
       .height(height)
       .backgroundColor('#1e1e2e')
       .nodeColor(n => {
+        if (n._expanded) return '#ffffff';
         if (n._role === 'changed') return '#f9e2af';
         if (n._role === 'caller') return '#fab387';
         if (n._role === 'callee') return '#89b4fa';
         return '#585b70';
       })
-      .nodeVal(n => n._role === 'changed' ? 5 : 2.5)
-      .nodeLabel(n => n.name + ' (' + n.file + ')')
+      .nodeVal(n => {
+        if (n._expanded) return 6;
+        if (n._role === 'changed') return 4;
+        return 2;
+      })
+      .nodeLabel(n => {
+        let tip = n.name + ' (' + n.file + ')';
+        if (n._role === 'changed') tip += '\n\nClick to expand connections';
+        if (n._callerCount) tip += '\n' + n._callerCount + ' callers';
+        if (n._calleeCount) tip += '\n' + n._calleeCount + ' callees';
+        return tip;
+      })
+      // Only show labels for expanded node and its neighbors, or if few nodes
       .nodeCanvasObjectMode(() => 'after')
       .nodeCanvasObject((n, ctx, globalScale) => {
-        const label = n.name;
-        const fontSize = Math.max(10 / globalScale, 2);
+        // Show label only for: expanded node, its direct neighbors, or if total nodes <= 8
+        const showLabel = n._expanded || n._role !== 'changed' || subgraph.nodes.length <= 8;
+        if (!showLabel) return;
+        const fontSize = Math.max(9 / globalScale, 1.5);
         ctx.font = fontSize + 'px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillStyle = n._role === 'changed' ? '#f9e2af' : n._role === 'caller' ? '#fab387' : n._role === 'callee' ? '#89b4fa' : '#a6adc8';
-        ctx.fillText(label, n.x, n.y + 5);
+        ctx.fillStyle = n._expanded ? '#ffffff' : n._role === 'changed' ? '#f9e2afcc' : n._role === 'caller' ? '#fab387' : '#89b4fa';
+        ctx.fillText(n.name, n.x, n.y + 4);
       })
-      .linkColor(() => '#45475a')
-      .linkWidth(1)
+      .linkColor(l => l.type === 'CALLS' ? '#89b4fa44' : '#fab38744')
+      .linkWidth(l => 1.5)
       .linkDirectionalArrowLength(4)
       .linkDirectionalArrowRelPos(1)
-      .linkCurvature(0.15)
-      .linkLabel(l => l.type)
+      .linkCurvature(0.2)
       .onNodeClick(n => {
-        if (n && n.id) previewNode(n.id);
+        if (n && n.id) {
+          expand2dNode(n.id);
+          previewNode(n.id);
+        }
       })
-      .cooldownTicks(60)
-      .warmupTicks(30);
+      .cooldownTicks(80)
+      .warmupTicks(40);
+
+    // Stronger repulsion so nodes spread out — use the graph's own d3 ref
+    impactGraph2d.d3Force('charge').strength(-200);
+    impactGraph2d.d3Force('link').distance(60);
   }, 100);
 
   // Fetch test suggestions async
