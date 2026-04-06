@@ -11,14 +11,15 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-734%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-766%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen" alt="Coverage">
+  <img src="https://img.shields.io/badge/MCP%20tools-17-blueviolet" alt="17 MCP tools">
   <img src="https://img.shields.io/badge/dependencies-zero%20(core)-orange" alt="Zero deps">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License">
 </p>
 
 <p align="center">
-  <img src="screenshot.png" alt="vector-graph 3D visualization" width="800">
+  <img src="vector_graph.png" alt="vector-graph 3D visualization" width="800">
 </p>
 
 ---
@@ -57,18 +58,20 @@ vector-graph ~/your/project --serve
 ### Live Radar (vibe coding mode)
 
 ```bash
-# Terminal 1 — radar
+# Terminal 1 -- radar
 vector-graph ~/your/project --watch --serve
 
-# Terminal 2 — vibe code
+# Terminal 2 -- vibe code
 claude   # or aider, cursor, etc.
 ```
 
-Every file change triggers: camera fly-to, impact chain highlight, nebula glow, and change timeline update.
+Every file change triggers: camera fly-to, ripple animation, impact chain highlight, nebula glow, and change timeline update.
 
 ## Features
 
 ### Three Visualization Modes
+
+Switch via sidebar buttons or keyboard shortcuts `1` / `2` / `3`. All modes pre-cached on load -- switching is instant.
 
 | Mode | Key | Nodes | Edges | Use Case |
 |------|-----|-------|-------|----------|
@@ -76,11 +79,9 @@ Every file change triggers: camera fly-to, impact chain highlight, nebula glow, 
 | **Logic** | `2` | Files + Functions + Classes + Methods | Calls + Imports + Extends | Call flow analysis (default) |
 | **Deep** | `3` | All types (variables, decorators, properties) | All edge types | Full data flow |
 
-All three modes pre-cached on load -- switching is instant.
-
 ### Distinct Node Shapes
 
-Each code element has a unique 3D geometry:
+Each code element has a unique 3D geometry so you can tell types apart at a glance:
 
 | Shape | Type | Color |
 |-------|------|-------|
@@ -97,24 +98,34 @@ Each code element has a unique 3D geometry:
 ### Live Change Tracking
 
 **Summary mode** (default):
-- Compact change card with add/modify/remove counts
-- Auto-generated **flow diagrams**: `[callers] -> [changed_fn] -> [callees]`
+- Auto-generated **change narrative** ("Added validate_tag and integrated into tag_task")
+- **Semantic grouping** of multi-file changes by purpose (call graph clustering)
+- **2D impact graph** -- interactive mini-graph showing changed nodes + connections, click to expand neighbors
 - Removed functions show syntax-highlighted old code + orphaned callers
-- Impact summary with blast radius
+- Ripple wave animation from change origin
 
 **Detail mode**:
 - Inline unified code diffs with Python syntax highlighting
 - Expandable source preview per dependency
-- Test suggestions (which tests to run)
+- Test suggestions (which tests to run based on call graph)
 - Session change frequency counter
 
 ### 3D Nebula Visualization
 
 - Nodes grouped by package into **nebula clusters** (Three.js spheres + stardust + orbital rings)
-- **Click node**: connections highlighted, everything else dims, inspector opens
-- **Resizable panels**: drag sidebar/inspector edges
-- **Health mode**: color by cyclomatic complexity (green -> red)
+- **Spotlight mode**: changed nodes get pulsing glow rings, rest of graph stays visible
+- **Click node**: connections highlighted, inspector opens with source code
+- **Resizable panels**: drag sidebar and inspector edges
+- **Health mode**: color nodes by cyclomatic complexity (green -> red)
+- **Hotspot mode**: color nodes by git change frequency (blue=stable -> red=volatile)
 - **Tooltips**: hover any UI element for explanation
+
+### Git Time Dimension
+
+- **Hotspot detection**: git change frequency x code complexity = tech debt heatmap
+- **Co-change analysis**: files that always change together = implicit coupling
+- **Node tooltips**: show change count (90 days), recency, top contributors
+- **`/api/git-history`** endpoint with full hotspot + co-change data
 
 ### Claude Code Integration
 
@@ -127,7 +138,7 @@ Installs a `PreToolUse` hook -- checks risk before every `Edit`/`Write`:
 - **HIGH/CRITICAL**: one-line warning (~30 tokens)
 - Server not running: silent, no error
 
-### MCP Server (15 Tools)
+### MCP Server (17 Tools)
 
 ```jsonc
 // .mcp.json
@@ -148,6 +159,8 @@ Installs a `PreToolUse` hook -- checks risk before every `Edit`/`Write`:
 | `suggest_tests` | Which tests to run after a change |
 | `what_changed` | Session change summary |
 | `dependency_check` | Would this import create a cycle? |
+| `hotspot_report` | Git change frequency hotspots |
+| `co_change` | Files that commonly change together |
 | `graph_query` | 8 structured query types |
 | `health` | Full codebase health report |
 | `complexity` | Per-function McCabe complexity |
@@ -190,9 +203,9 @@ vector-graph-mcp ~/project
 | Code health | McCabe cyclomatic complexity, fan-in/out, coupling/cohesion | Per-function + per-module |
 | Impact analysis | BFS blast radius with depth-based risk scoring | LOW/MEDIUM/HIGH/CRITICAL |
 | Change detection | AST signature comparison (params, return type, decorators, line span) | Real modifications only |
+| Git hotspots | Change frequency x complexity over 90 days | Normalized 0-1 score |
 | Cycle detection | Tarjan's strongly connected components | Exact |
 | Communities | Label propagation clustering | Automatic grouping |
-| Execution flows | Entry point scoring + BFS trace | Full path coverage |
 | ROS2 extraction | AST mining for rclpy nodes, topics, services, actions | Launch file + msg parsing |
 
 ## Architecture
@@ -218,6 +231,7 @@ vector_graph/
     call_graph.py        Type-aware call edge resolution
     complexity.py        McCabe complexity + health scoring
     impact.py            BFS blast radius analysis
+    git_history.py       Hotspot detection + co-change analysis
     cycles.py            Tarjan SCC cycle detection
     community.py         Label propagation clustering
     execution_flow.py    Entry-point tracing
@@ -233,13 +247,13 @@ vector_graph/
   api/              User-facing interfaces
     python_api.py        CodeGraph class + CLI entry point
     web_server.py        HTTP server + graph data API
-    mcp_server.py        MCP protocol (15 tools, stdio transport)
+    mcp_server.py        MCP protocol (17 tools, stdio transport)
     sse_server.py        Server-Sent Events broadcaster
     tui.py               Terminal dashboard (rich/textual)
     visualize.py         CLI output formatting
     static/              Frontend assets
       index.html         HTML shell
-      graph.js           3D visualization (Three.js + 3d-force-graph)
+      graph.js           3D + 2D visualization
       graph.css          Catppuccin Mocha theme
 
   hooks/            Claude Code integration
@@ -273,27 +287,28 @@ vector_graph/
 |-------|-----------|---------|---------|
 | **Core** | Python stdlib `ast` | 3.10+ | AST parsing, zero external deps |
 | **3D Rendering** | Three.js | r137.0 | WebGL scene, nebula geometry, lighting |
-| **Force Graph** | 3d-force-graph | 1.79.1 | Force-directed layout, node interaction |
+| **3D Force Graph** | 3d-force-graph | 1.79.1 | Force-directed 3D layout |
+| **2D Impact Graph** | force-graph | 1.51.2 | Interactive 2D change topology |
 | **Syntax Highlighting** | highlight.js | 11.9.0 | Code diffs + source previews |
 | **File Watching** | watchdog | 3.0+ | Filesystem event monitoring (optional) |
 | **MCP Protocol** | mcp | 1.0+ | Claude Code tool integration (optional) |
 | **Terminal UI** | rich / textual | latest | TUI dashboard (optional) |
 | **Community Detection** | networkx | 3.0+ | Label propagation (optional) |
 | **Graph Export** | pygraphviz | 1.7+ | DOT format rendering (optional) |
-| **Testing** | pytest + pytest-cov | 7.0+ | 734 tests, 86% coverage |
+| **Testing** | pytest + pytest-cov | 7.0+ | 766 tests, 86% coverage |
 | **Build** | hatchling | latest | PEP 517 build backend |
 
 ## Example Project
 
 ```bash
-# Included taskflow demo — 6 nebulae, ~500 nodes, cycles, orphans, god classes
+# Included taskflow demo -- 6 nebulae, ~500 nodes, cycles, orphans, god classes
 vector-graph examples/taskflow --serve --max-nodes 500
 ```
 
 ## Testing
 
 ```bash
-pytest -q                          # 734 tests, ~20s
+pytest -q                          # 766 tests, ~20s
 pytest --cov=vector_graph          # 86% coverage
 pytest -m level0                   # data types only
 pytest -m level2                   # analysis algorithms only
