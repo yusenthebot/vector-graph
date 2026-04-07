@@ -169,6 +169,84 @@ class TaskEngine:
             self._save_task(task)
         return True
 
+    # --- Dependencies ---
+
+    def add_dependency(self, task_id: str, depends_on_id: str) -> bool:
+        """Add a dependency: task_id depends on depends_on_id.
+
+        Returns False if either task doesn't exist, dependency already exists,
+        a task depends on itself, or adding would create a cycle.
+        """
+        if task_id == depends_on_id:
+            return False
+        task = self.get_task(task_id)
+        dep = self.get_task(depends_on_id)
+        if task is None or dep is None:
+            return False
+        if depends_on_id in task.dependencies:
+            return False
+        if self._would_create_cycle(task_id, depends_on_id):
+            return False
+        task.dependencies.append(depends_on_id)
+        self._save_task(task)
+        return True
+
+    def remove_dependency(self, task_id: str, depends_on_id: str) -> bool:
+        task = self.get_task(task_id)
+        if task is None or depends_on_id not in task.dependencies:
+            return False
+        task.dependencies.remove(depends_on_id)
+        self._save_task(task)
+        return True
+
+    def get_dependency_chain(self, task_id: str) -> list[str]:
+        """Return all transitive dependencies (topological order)."""
+        visited: list[str] = []
+        self._collect_deps(task_id, visited, set())
+        return visited
+
+    def get_blocked_reason(self, task_id: str) -> list[str]:
+        """Return IDs of incomplete dependencies blocking this task."""
+        task = self.get_task(task_id)
+        if task is None:
+            return []
+        blocked_by: list[str] = []
+        for dep_id in task.dependencies:
+            dep = self.get_task(dep_id)
+            if dep is not None and dep.status != TaskStatus.DONE:
+                blocked_by.append(dep_id)
+        return blocked_by
+
+    def _would_create_cycle(self, task_id: str, new_dep_id: str) -> bool:
+        """Check if adding new_dep_id as dependency of task_id creates a cycle."""
+        visited: set[str] = set()
+        return self._reaches(new_dep_id, task_id, visited)
+
+    def _reaches(self, from_id: str, target_id: str, visited: set[str]) -> bool:
+        """DFS: can we reach target_id starting from from_id via dependencies?"""
+        if from_id == target_id:
+            return True
+        if from_id in visited:
+            return False
+        visited.add(from_id)
+        task = self.get_task(from_id)
+        if task is None:
+            return False
+        for dep_id in task.dependencies:
+            if self._reaches(dep_id, target_id, visited):
+                return True
+        return False
+
+    def _collect_deps(self, task_id: str, result: list[str], visited: set[str]) -> None:
+        task = self.get_task(task_id)
+        if task is None:
+            return
+        for dep_id in task.dependencies:
+            if dep_id not in visited:
+                visited.add(dep_id)
+                self._collect_deps(dep_id, result, visited)
+                result.append(dep_id)
+
     # --- Delete ---
 
     def delete_task(self, task_id: str) -> bool:
@@ -189,6 +267,7 @@ class TaskEngine:
             "assignee": task.assignee,
             "project_id": task.project_id,
             "tags": list(task.tags),
+            "dependencies": list(task.dependencies),
             "subtasks": [
                 {"id": st.id, "title": st.title, "done": st.done}
                 for st in task.subtasks
@@ -218,6 +297,7 @@ class TaskEngine:
             assignee=data.get("assignee"),
             project_id=data.get("project_id"),
             tags=list(data.get("tags", [])),
+            dependencies=list(data.get("dependencies", [])),
             subtasks=subtasks,
             created_at=created_at,
             due_date=due_date,

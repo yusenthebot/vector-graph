@@ -27,11 +27,7 @@ def build_demo_data(engine: TaskEngine, project_engine: ProjectEngine) -> None:
 
     engine.create_task("task-001", "Implement path planner", priority=Priority.HIGH)
     engine.create_task("task-002", "Write SLAM integration tests", priority=Priority.MEDIUM)
-    engine.create_task(
-        "task-003",
-        "Tune PID controller",
-        tags=["depends_on:task-001"],
-    )
+    engine.create_task("task-003", "Tune PID controller")
     engine.create_task(
         "task-004",
         "Deploy to robot hardware",
@@ -48,6 +44,10 @@ def build_demo_data(engine: TaskEngine, project_engine: ProjectEngine) -> None:
     engine.add_subtask("task-001", SubTask("st-1", "Design interface"))
     engine.add_subtask("task-001", SubTask("st-2", "Implement A*"))
     engine.complete_subtask("task-001", "st-1")
+
+    # Dependencies: task-003 depends on task-001, task-004 depends on task-003
+    engine.add_dependency("task-003", "task-001")
+    engine.add_dependency("task-004", "task-003")
 
 
 def _build_engines() -> tuple[TaskEngine, ProjectEngine, PriorityScheduler]:
@@ -121,8 +121,28 @@ def main() -> None:
     cmd_search(task_engine, "keyword='planner'", keyword="planner")
     cmd_search(task_engine, "priority >= HIGH", priority=Priority.HIGH)
     cmd_search(task_engine, "overdue only", overdue_only=True)
-    cmd_search(task_engine, "tag='depends_on:task-001'",
-               tag="depends_on:task-001", sort_by="created")
+
+    print("-- Dependencies: task-003 --")
+    cmd_show(task_engine, "task-003")
+    print()
+
+    print("-- Dependency chain: task-004 --")
+    chain = task_engine.get_dependency_chain("task-004")
+    print(f"  task-004 transitively depends on: {' -> '.join(chain)}")
+    print()
+
+    print("-- Blocked reason: task-003 --")
+    blocked_by = task_engine.get_blocked_reason("task-003")
+    if blocked_by:
+        print(f"  Blocked by: {', '.join(blocked_by)}")
+    else:
+        print("  Not blocked")
+    print()
+
+    print("-- Cycle detection: task-001 -> task-003 (would create cycle) --")
+    ok = task_engine.add_dependency("task-001", "task-003")
+    print(f"  add_dependency('task-001', 'task-003') = {ok}")
+    print()
 
     print("-- Project p1 --")
     cmd_project(project_engine, "p1")

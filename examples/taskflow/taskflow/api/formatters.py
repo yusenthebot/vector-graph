@@ -37,6 +37,7 @@ def format_task_detail(task: Task) -> str:
         f"Assignee:    {task.assignee or '(unassigned)'}",
         f"Project:     {task.project_id or '(none)'}",
         f"Tags:        {', '.join(task.tags) or '(none)'}",
+        f"Depends on:  {', '.join(task.dependencies) or '(none)'}",
         f"Overdue:     {task.is_overdue}",
         f"Completion:  {task.completion_ratio:.0%}",
     ]

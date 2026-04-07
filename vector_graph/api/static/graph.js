@@ -2476,10 +2476,12 @@ function showImpactPanel(change) {
     if (change.impact) html += ' &middot; ' + change.impact.affected_count + ' in blast radius';
     html += '</div></div></div>';
 
-    // ── Impact Tree (v0.9.2 — HTML tree, replaces ForceGraph 2D canvas) ──
-    if (activeChangeIds.size > 0) {
-      html += '<div class="insp-section"><h4>Impact Tree <span style="font-size:8px;color:var(--overlay0);font-weight:normal;text-transform:none">&mdash; click node to fly to</span></h4>';
-      html += buildImpactTree(change);
+    // ── 2D Impact Graph (force-directed) ──
+    if (activeChangeIds.size > 0 && typeof ForceGraph !== 'undefined') {
+      html += '<div class="insp-section"><h4>Impact Graph <span style="font-size:8px;color:var(--overlay0);font-weight:normal;text-transform:none">&mdash; click to expand</span></h4>';
+      html += '<div id="impact-graph-container"></div>';
+      html += '<div class="impact-graph-legend"><span class="legend-changed">changed</span> <span class="legend-caller">caller</span> <span class="legend-callee">callee</span></div>';
+      html += '<div id="impact-node-detail"><span style="color:var(--overlay0);font-size:10px">Click a node to see details</span></div>';
       html += '</div>';
     }
 
@@ -2646,11 +2648,108 @@ function showImpactPanel(change) {
 
   document.getElementById('insp-body').innerHTML = html;
 
-  // Delegated click for impact tree nodes (data-nid attribute)
-  document.getElementById('insp-body').addEventListener('click', function(e) {
-    var el = e.target.closest('[data-nid]');
-    if (el && el.dataset.nid) previewNode(el.dataset.nid);
-  });
+  // Initialize 2D impact graph (after DOM is ready)
+  setTimeout(function() {
+    var container = document.getElementById('impact-graph-container');
+    if (!container || typeof ForceGraph === 'undefined') return;
+
+    if (impactGraph2d) { impactGraph2d._destructor && impactGraph2d._destructor(); impactGraph2d = null; }
+
+    // Auto-expand: start with changed nodes + their 1-hop CALLS neighbors
+    _expandedNode2d = null;
+    // Pre-expand all changed nodes
+    activeChangeIds.forEach(function(cid) { _expandedNode2d = cid; });
+    // Build with last changed node expanded (shows its neighbors)
+    var subgraph = buildImpactSubgraph();
+    // Also add all other changed nodes' neighbors
+    var gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
+    activeChangeIds.forEach(function(cid) {
+      (linkIndex.to[cid] || []).forEach(function(l) {
+        if (l.type !== 'CALLS') return;
+        var sid = typeof l.source === 'object' ? l.source.id : l.source;
+        if (!subgraph.nodes.find(function(n){return n.id===sid;})) {
+          var src = gData.nodes.find(function(n){return n.id===sid;});
+          if (src) subgraph.nodes.push({id:src.id, name:src.name, label:src.label, file:(src.file||'').split('/').pop(), _role:'caller', group:src.group});
+        }
+      });
+      (linkIndex.from[cid] || []).forEach(function(l) {
+        if (l.type !== 'CALLS') return;
+        var tid = typeof l.target === 'object' ? l.target.id : l.target;
+        if (!subgraph.nodes.find(function(n){return n.id===tid;})) {
+          var tgt = gData.nodes.find(function(n){return n.id===tid;});
+          if (tgt) subgraph.nodes.push({id:tgt.id, name:tgt.name, label:tgt.label, file:(tgt.file||'').split('/').pop(), _role:'callee', group:tgt.group});
+        }
+      });
+    });
+    // Rebuild edges for expanded set
+    var nids = new Set(subgraph.nodes.map(function(n){return n.id;}));
+    subgraph.links = [];
+    gData.links.forEach(function(l) {
+      var sid = typeof l.source === 'object' ? l.source.id : l.source;
+      var tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (nids.has(sid) && nids.has(tid) && (l.type === 'CALLS' || l.type === 'IMPORTS')) {
+        subgraph.links.push({source:sid, target:tid, type:l.type});
+      }
+    });
+    // Cap at 60 nodes
+    if (subgraph.nodes.length > 60) {
+      subgraph.nodes = subgraph.nodes.filter(function(n){return n._role==='changed';}).concat(
+        subgraph.nodes.filter(function(n){return n._role!=='changed';}).slice(0, 60 - activeChangeIds.size)
+      );
+      nids = new Set(subgraph.nodes.map(function(n){return n.id;}));
+      subgraph.links = subgraph.links.filter(function(l){return nids.has(l.source) && nids.has(l.target);});
+    }
+
+    if (subgraph.nodes.length === 0) return;
+
+    var width = container.clientWidth;
+    var height = 350;
+
+    impactGraph2d = ForceGraph()(container)
+      .graphData(subgraph)
+      .width(width)
+      .height(height)
+      .backgroundColor('#1e1e2e')
+      .nodeColor(function(n) {
+        if (n._role === 'changed') return '#f9e2af';
+        if (n._role === 'caller') return '#fab387';
+        if (n._role === 'callee') return '#89b4fa';
+        return '#585b70';
+      })
+      .nodeVal(function(n) {
+        return n._role === 'changed' ? 5 : 3;
+      })
+      .nodeLabel(function(n) {
+        return _esc(n.name) + ' (' + _esc(n.label) + ')\n' + _esc(n.file || '');
+      })
+      .nodeCanvasObjectMode(function() { return 'after'; })
+      .nodeCanvasObject(function(n, ctx, globalScale) {
+        var fontSize = Math.max(10 / globalScale, 2.5);
+        ctx.font = fontSize + 'px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = n._role === 'changed' ? '#f9e2af' : n._role === 'caller' ? '#fab387' : '#89b4fa';
+        var label = n.name;
+        if (label.length > 20) label = label.slice(0, 18) + '..';
+        ctx.fillText(label, n.x, n.y + 6);
+      })
+      .linkColor(function(l) { return l.type === 'CALLS' ? '#89b4fa44' : '#fab38744'; })
+      .linkWidth(1.5)
+      .linkDirectionalArrowLength(5)
+      .linkDirectionalArrowRelPos(1)
+      .linkCurvature(0.15)
+      .onNodeClick(function(n) {
+        if (n && n.id) {
+          expand2dNode(n.id);
+          previewNode(n.id);
+        }
+      })
+      .cooldownTicks(80)
+      .warmupTicks(40);
+
+    impactGraph2d.d3Force('charge').strength(subgraph.nodes.length > 20 ? -400 : -200);
+    impactGraph2d.d3Force('link').distance(subgraph.nodes.length > 20 ? 80 : 60);
+  }, 100);
 
   // Fetch test suggestions async
   if (changedNames.length > 0) {

@@ -903,23 +903,20 @@ class TestGitHistoryEndpoint:
 # 2D impact graph label collision avoidance
 # ---------------------------------------------------------------------------
 
-class TestImpactGraphLabels:
-    """Impact graph rendering (updated v0.9.2 — HTML tree replaced force-graph canvas)."""
+class TestImpactGraph:
+    """2D impact force-graph restored with auto-expand (v0.9.2+)."""
 
-    def test_impact_tree_replaces_force_graph(self):
-        """v0.9.2: HTML impact tree replaces the old 2D force-graph canvas."""
+    def test_impact_graph_container(self):
         from vector_graph.api.web_server import _HTML
-        assert "buildImpactTree" in _HTML
+        assert 'impact-graph-container' in _HTML
 
-    def test_2d_hover_state_var_retained(self):
-        """hovered2dId state variable is retained (used by buildImpactSubgraph dead code)."""
+    def test_build_impact_subgraph(self):
         from vector_graph.api.web_server import _HTML
-        assert "hovered2dId" in _HTML
+        assert 'buildImpactSubgraph' in _HTML
 
-    def test_impact_tree_has_calls_groups(self):
-        """Impact tree shows calls/called-by groups for each changed node."""
+    def test_force_graph_init(self):
         from vector_graph.api.web_server import _HTML
-        assert "tree-group-label" in _HTML or "tree-group" in _HTML
+        assert 'ForceGraph()' in _HTML or 'ForceGraph' in _HTML
 
 
 # ---------------------------------------------------------------------------

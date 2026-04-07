@@ -158,6 +158,100 @@ class TestSearchTasks:
         assert results[0].id == "t3"
 
 
+class TestDependencies:
+    def test_add_dependency(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "First")
+        engine.create_task("t2", "Second")
+        assert engine.add_dependency("t2", "t1")
+        task = engine.get_task("t2")
+        assert "t1" in task.dependencies
+
+    def test_add_dependency_missing_task(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "First")
+        assert not engine.add_dependency("t2", "t1")
+        assert not engine.add_dependency("t1", "t2")
+
+    def test_self_dependency_rejected(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "First")
+        assert not engine.add_dependency("t1", "t1")
+
+    def test_duplicate_dependency_rejected(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "First")
+        engine.create_task("t2", "Second")
+        assert engine.add_dependency("t2", "t1")
+        assert not engine.add_dependency("t2", "t1")
+
+    def test_cycle_detection_direct(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        engine.create_task("t2", "B")
+        engine.add_dependency("t2", "t1")
+        # t1 -> t2 would create cycle: t1 depends on t2 depends on t1
+        assert not engine.add_dependency("t1", "t2")
+
+    def test_cycle_detection_transitive(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        engine.create_task("t2", "B")
+        engine.create_task("t3", "C")
+        engine.add_dependency("t2", "t1")
+        engine.add_dependency("t3", "t2")
+        # t1 -> t3 would create cycle: t1 -> t3 -> t2 -> t1
+        assert not engine.add_dependency("t1", "t3")
+
+    def test_remove_dependency(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        engine.create_task("t2", "B")
+        engine.add_dependency("t2", "t1")
+        assert engine.remove_dependency("t2", "t1")
+        task = engine.get_task("t2")
+        assert "t1" not in task.dependencies
+
+    def test_remove_nonexistent_dependency(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        assert not engine.remove_dependency("t1", "t2")
+
+    def test_dependency_chain(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        engine.create_task("t2", "B")
+        engine.create_task("t3", "C")
+        engine.add_dependency("t2", "t1")
+        engine.add_dependency("t3", "t2")
+        chain = engine.get_dependency_chain("t3")
+        assert chain == ["t1", "t2"]
+
+    def test_blocked_reason(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "Dep")
+        engine.create_task("t2", "Blocked")
+        engine.add_dependency("t2", "t1")
+        assert engine.get_blocked_reason("t2") == ["t1"]
+
+    def test_blocked_reason_resolved(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "Dep")
+        engine.create_task("t2", "Blocked")
+        engine.add_dependency("t2", "t1")
+        engine.update_status("t1", TaskStatus.DONE)
+        assert engine.get_blocked_reason("t2") == []
+
+    def test_dependency_persisted(self) -> None:
+        engine = make_engine()
+        engine.create_task("t1", "A")
+        engine.create_task("t2", "B")
+        engine.add_dependency("t2", "t1")
+        # Re-fetch from store
+        task = engine.get_task("t2")
+        assert task.depends_on("t1")
+
+
 class TestNotifications:
     def test_subscriber_receives_created_event(self) -> None:
         engine = make_engine()

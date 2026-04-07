@@ -275,7 +275,7 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
 /* 2D Impact graph in inspector panel */
 #impact-graph-container {
   width: 100%;
-  height: 280px;
+  height: 350px;
   background: var(--base);
   border-radius: 4px;
   overflow: hidden;

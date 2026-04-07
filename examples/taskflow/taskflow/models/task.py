@@ -40,6 +40,7 @@ class Task:
     project_id: Optional[str] = None
     subtasks: list[SubTask] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     due_date: Optional[datetime] = None
 
@@ -65,6 +66,9 @@ class Task:
                 self.subtasks[i] = SubTask(id=st.id, title=st.title, done=True)
                 return True
         return False
+
+    def depends_on(self, task_id: str) -> bool:
+        return task_id in self.dependencies
 
     def has_tag(self, tag: str) -> bool:
         return tag in self.tags
