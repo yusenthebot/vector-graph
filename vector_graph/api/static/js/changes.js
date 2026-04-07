@@ -369,9 +369,6 @@ async function fetchTestSuggestions(names) {
 // Build 2D impact subgraph data (nodes + links) for canvas rendering
 // 2D impact graph — progressive disclosure: start with changed nodes only,
 // click to expand neighbors. Labels on hover, not rendered permanently.
-let _expandedNode2d = null; // currently expanded node in 2D graph
-let hovered2dId = null; // hover-to-show labels when >15 nodes
-
 function buildImpactSubgraph() {
   const gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
   const subNodes = new Map();

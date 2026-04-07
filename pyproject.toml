@@ -17,8 +17,9 @@ watch = ["watchdog>=3.0"]
 mcp = ["mcp>=1.0"]
 viz = ["pygraphviz>=1.7"]
 all = ["vector-graph[analysis,watch,mcp,viz]"]
+e2e = ["pytest-playwright>=0.4"]
 dev = [
-    "vector-graph[all]",
+    "vector-graph[all,e2e]",
     "pytest>=7.0",
     "pytest-cov",
 ]
@@ -39,6 +40,7 @@ markers = [
     "level3: L3 — ROS2 extraction",
     "level4: L4 — file watcher",
     "level5: L5 — MCP server",
+    "e2e: E2E browser tests (requires playwright browsers)",
 ]
 
 [tool.coverage.run]

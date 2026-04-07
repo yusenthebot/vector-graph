@@ -11,24 +11,24 @@
 <body>
 <div id="app">
   <div id="main-row">
-    <div id="sidebar">
+    <div id="sidebar" data-testid="sidebar">
       <div id="sidebar-header">
         <h1 title="vector-graph — real-time code knowledge graph for vibe coding"><img src="/api/logo" alt="" style="width:24px;height:24px;vertical-align:middle;margin-right:6px;border-radius:50%;background:#cdd6f4;padding:2px">vector-graph</h1>
         <div id="mode-selector" title="Visualization granularity — controls which node types and edge types are shown">
-          <button class="mode-btn" data-mode="architecture" onclick="switchMode('architecture')" title="Architecture view: Only file nodes + import edges. See how modules depend on each other. (~50-100 nodes) [Key: 1]">Arch</button>
-          <button class="mode-btn active" data-mode="logic" onclick="switchMode('logic')" title="Logic view: Files, functions, classes, methods + call/import/extends edges. See what calls what. (~200-600 nodes) [Key: 2]">Logic</button>
-          <button class="mode-btn" data-mode="deep" onclick="switchMode('deep')" title="Deep view: All node types including variables, properties, decorators + all edge types. Full data flow picture. (~600-2000 nodes) [Key: 3]">Deep</button>
+          <button class="mode-btn" data-mode="architecture" data-testid="mode-btn-arch" onclick="switchMode('architecture')" title="Architecture view: Only file nodes + import edges. See how modules depend on each other. (~50-100 nodes) [Key: 1]">Arch</button>
+          <button class="mode-btn active" data-mode="logic" data-testid="mode-btn-logic" onclick="switchMode('logic')" title="Logic view: Files, functions, classes, methods + call/import/extends edges. See what calls what. (~200-600 nodes) [Key: 2]">Logic</button>
+          <button class="mode-btn" data-mode="deep" data-testid="mode-btn-deep" onclick="switchMode('deep')" title="Deep view: All node types including variables, properties, decorators + all edge types. Full data flow picture. (~600-2000 nodes) [Key: 3]">Deep</button>
         </div>
         <div class="search-wrap">
-          <input id="search" placeholder="Search... (Ctrl+K)" autocomplete="off" title="Search nodes by name — type to filter, click result to fly to node">
-          <div id="search-results"></div>
+          <input id="search" data-testid="search-input" placeholder="Search... (Ctrl+K)" autocomplete="off" title="Search nodes by name — type to filter, click result to fly to node">
+          <div id="search-results" data-testid="search-results"></div>
         </div>
       </div>
       <div class="sidebar-tabs">
-        <div class="sidebar-tab active" onclick="switchTab('explorer')" title="File tree — browse files and symbols in the project">Explorer</div>
-        <div class="sidebar-tab" onclick="switchTab('groups')" title="Nebula groups — click a group to focus the camera on that cluster">Groups</div>
-        <div class="sidebar-tab" onclick="switchTab('filters')" title="Toggle node types and edge types on/off, switch health color mode">Filters</div>
-        <div class="sidebar-tab" onclick="switchTab('changes')" title="Live change feed — shows file modifications detected by the watcher in real-time">Changes</div>
+        <div class="sidebar-tab active" data-testid="sidebar-tab-explorer" onclick="switchTab('explorer')" title="File tree — browse files and symbols in the project">Explorer</div>
+        <div class="sidebar-tab" data-testid="sidebar-tab-groups" onclick="switchTab('groups')" title="Nebula groups — click a group to focus the camera on that cluster">Groups</div>
+        <div class="sidebar-tab" data-testid="sidebar-tab-filters" onclick="switchTab('filters')" title="Toggle node types and edge types on/off, switch health color mode">Filters</div>
+        <div class="sidebar-tab" data-testid="sidebar-tab-changes" onclick="switchTab('changes')" title="Live change feed — shows file modifications detected by the watcher in real-time">Changes</div>
       </div>
       <div id="panel-explorer" class="sidebar-panel active" style="padding:6px 8px"></div>
       <div id="panel-groups" class="sidebar-panel" style="padding:6px 12px"></div>
@@ -36,34 +36,34 @@
       <div id="panel-changes" class="sidebar-panel" style="padding:6px 8px"></div>
     </div>
     <div class="resize-handle" id="sidebar-resize" title="Drag to resize sidebar"></div>
-    <div id="graph-container">
-      <canvas id="minimap" width="120" height="150"></canvas>
-      <div id="legend">
+    <div id="graph-container" data-testid="graph-container">
+      <canvas id="minimap" data-testid="minimap" width="120" height="150"></canvas>
+      <div id="legend" data-testid="legend">
         <div id="legend-header" onclick="document.getElementById('legend').classList.toggle('expanded')">Legend</div>
         <div id="legend-body"></div>
       </div>
     </div>
     <div class="resize-handle" id="inspector-resize" title="Drag to resize inspector panel"></div>
-    <aside id="inspector">
+    <aside id="inspector" data-testid="inspector">
       <div id="insp-header">
         <span class="type-badge" id="insp-badge"></span>
         <span id="insp-name"></span>
-        <button id="insp-close" title="Close inspector panel (Esc)">&times;</button>
+        <button id="insp-close" data-testid="insp-close" title="Close inspector panel (Esc)">&times;</button>
       </div>
       <div id="insp-meta"></div>
       <div id="insp-body"></div>
     </aside>
   </div><!-- main-row -->
-  <div id="statusbar">
+  <div id="statusbar" data-testid="statusbar">
     <div id="sb-mode"></div>
-    <div id="sb-stats"></div>
+    <div id="sb-stats" data-testid="sb-stats"></div>
     <div class="sb-spacer"></div>
     <div id="sb-fps"></div>
     <div id="sb-hints"></div>
   </div>
 </div>
 
-  <div id="cmd-palette">
+  <div id="cmd-palette" data-testid="cmd-palette">
     <div id="cmd-backdrop"></div>
     <div id="cmd-dialog">
       <input id="cmd-input" placeholder="Search nodes, files, commands..." autocomplete="off" spellcheck="false">

@@ -10,3 +10,4 @@ build/
 lib/
 .sdd/
 .claude/worktrees/
+tests/e2e/screenshots/*.png

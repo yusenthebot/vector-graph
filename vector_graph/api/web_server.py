@@ -356,6 +356,33 @@ def _load_html() -> str:
 _HTML = _load_html()
 
 
+def _static_hash() -> str:
+    """Return MD5 hash of all static files for dev auto-reload."""
+    import hashlib
+    h = hashlib.md5()
+    js_dir = _STATIC_DIR / "js"
+    for name in _JS_LOAD_ORDER:
+        h.update((js_dir / name).read_bytes())
+    h.update((_STATIC_DIR / "graph.css").read_bytes())
+    h.update((_STATIC_DIR / "index.html").read_bytes())
+    return h.hexdigest()
+
+
+_DEV_RELOAD_SCRIPT = """
+<script>
+(function() {
+  var lastHash = '';
+  setInterval(function() {
+    fetch('/api/dev-status').then(function(r) { return r.json(); }).then(function(d) {
+      if (lastHash && d.hash !== lastHash) location.reload();
+      lastHash = d.hash;
+    }).catch(function() {});
+  }, 1000);
+})();
+</script>
+"""
+
+
 # ---------------------------------------------------------------------------
 # HTTP Server
 # ---------------------------------------------------------------------------
@@ -435,6 +462,7 @@ def serve(
     port: int = 5555,
     max_nodes: int = 600,
     change_tracker=None,
+    dev: bool = False,
 ) -> None:
     """Start local HTTP server with 3D graph visualization.
 
@@ -452,6 +480,10 @@ def serve(
         Optional ChangeTracker instance.  When provided, the server exposes
         /api/changes (recent events) and /api/session (summary) and
         /api/events (SSE stream) that push real-time change notifications.
+    dev:
+        When True, enables hot-reload mode: the HTML is re-read from disk on
+        every request and an in-page poller checks /api/dev-status for file
+        hash changes, reloading the browser automatically when JS/CSS change.
     """
     print("Preparing graph data...")
     # Pre-compute health scores for the visualization
@@ -512,7 +544,11 @@ def serve(
             params = dict(urllib.parse.parse_qsl(parsed.query))
 
             if path == "/" or path == "/index.html":
-                self._respond(200, "text/html", html_bytes)
+                if dev:
+                    fresh = _load_html().replace("</body>", _DEV_RELOAD_SCRIPT + "</body>")
+                    self._respond(200, "text/html", fresh.encode("utf-8"))
+                else:
+                    self._respond(200, "text/html", html_bytes)
             elif path == "/api/logo":
                 # Look for logo relative to package root (../../logo.png from api/web_server.py)
                 candidates = [
@@ -692,6 +728,8 @@ def serve(
                     })
                 except ImportError:
                     self._json({"error": "git_history module not available", "hotspots": [], "co_changes": [], "summary": {}})
+            elif path == "/api/dev-status":
+                self._respond(200, "application/json", json.dumps({"hash": _static_hash()}).encode())
             elif path == "/debug":
                 self._respond(200, "text/html", _DEBUG_HTML.encode())
             else:

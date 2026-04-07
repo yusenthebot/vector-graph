@@ -254,6 +254,7 @@ def main() -> None:
         help="Export graph to FORMAT (json or dot) and print to stdout",
     )
     parser.add_argument("--install-hook", action="store_true", help="Install Claude Code PreToolUse hook")
+    parser.add_argument("--dev", action="store_true", help="Dev mode: auto-reload on file changes")
     args = parser.parse_args()
 
     # Handle --install-hook before anything else
@@ -311,6 +312,7 @@ def main() -> None:
                         "port": args.port,
                         "max_nodes": args.max_nodes,
                         "change_tracker": tracker,
+                        "dev": args.dev,
                     },
                     daemon=True,
                 )
@@ -348,4 +350,4 @@ def main() -> None:
     # --serve without --watch: static web view
     if args.serve:
         from vector_graph.api.web_server import serve
-        serve(cg._graph, root_path=str(cg._root), port=args.port, max_nodes=args.max_nodes)
+        serve(cg._graph, root_path=str(cg._root), port=args.port, max_nodes=args.max_nodes, dev=args.dev)
