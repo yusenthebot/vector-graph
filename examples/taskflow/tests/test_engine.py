@@ -95,6 +95,69 @@ class TestSubtaskOps:
         assert not engine.add_subtask("missing", SubTask("s1", "Step"))
 
 
+class TestSearchTasks:
+    def _populated(self) -> TaskEngine:
+        engine = make_engine()
+        from datetime import datetime, timedelta
+        engine.create_task("t1", "Implement path planner", priority=Priority.HIGH,
+                           description="A* algorithm for nav")
+        engine.create_task("t2", "Write unit tests", priority=Priority.MEDIUM,
+                           tags=["testing"])
+        engine.create_task("t3", "Deploy to hardware", priority=Priority.CRITICAL,
+                           due_date=datetime.now() - timedelta(days=1))
+        engine.create_task("t4", "Update docs", priority=Priority.LOW,
+                           tags=["testing", "docs"])
+        return engine
+
+    def test_keyword_matches_title(self) -> None:
+        engine = self._populated()
+        assert len(engine.search_tasks(keyword="planner")) == 1
+
+    def test_keyword_matches_description(self) -> None:
+        engine = self._populated()
+        assert len(engine.search_tasks(keyword="algorithm")) == 1
+
+    def test_keyword_case_insensitive(self) -> None:
+        engine = self._populated()
+        assert len(engine.search_tasks(keyword="PLANNER")) == 1
+
+    def test_priority_filter(self) -> None:
+        engine = self._populated()
+        results = engine.search_tasks(priority=Priority.HIGH)
+        ids = {t.id for t in results}
+        assert "t1" in ids and "t3" in ids
+        assert "t4" not in ids
+
+    def test_tag_filter(self) -> None:
+        engine = self._populated()
+        ids = {t.id for t in engine.search_tasks(tag="testing")}
+        assert ids == {"t2", "t4"}
+
+    def test_overdue_filter(self) -> None:
+        engine = self._populated()
+        results = engine.search_tasks(overdue_only=True)
+        assert len(results) == 1 and results[0].id == "t3"
+
+    def test_combined_filters(self) -> None:
+        engine = self._populated()
+        results = engine.search_tasks(keyword="unit", tag="testing")
+        assert len(results) == 1 and results[0].id == "t2"
+
+    def test_no_match(self) -> None:
+        engine = self._populated()
+        assert engine.search_tasks(keyword="nonexistent") == []
+
+    def test_sort_by_priority_desc(self) -> None:
+        engine = self._populated()
+        results = engine.search_tasks()
+        assert results[0].priority.value >= results[-1].priority.value
+
+    def test_sort_by_due_date_asc(self) -> None:
+        engine = self._populated()
+        results = engine.search_tasks(sort_by="due_date", ascending=True)
+        assert results[0].id == "t3"
+
+
 class TestNotifications:
     def test_subscriber_receives_created_event(self) -> None:
         engine = make_engine()

@@ -2289,6 +2289,10 @@ function buildSemanticGroups(history) {
 
 // ── Impact Tree (v0.9.2 — replaces ForceGraph 2D canvas) ──────────────────
 
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 function buildImpactTree(change) {
   var changedFile = (change.file || '').split('/').pop();
   var gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
@@ -2309,7 +2313,7 @@ function buildImpactTree(change) {
   var typeColor = change.type === 'created' ? 'var(--green)' : change.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
   html += '<div class="tree-root">';
   html += '<span class="tree-type" style="color:' + typeColor + '">' + typeLabel + '</span> ';
-  html += '<span class="tree-file">' + changedFile + '</span>';
+  html += '<span class="tree-file">' + _esc(changedFile) + '</span>';
   html += '</div>';
 
   // Changed functions / classes
@@ -2321,10 +2325,10 @@ function buildImpactTree(change) {
     var prefix = added ? '+' : removed ? '-' : '~';
 
     html += '<div class="tree-branch">';
-    html += '<div class="tree-node tree-changed" onclick="previewNode(\'' + n.id + '\')" style="border-left-color:' + color + '">';
+    html += '<div class="tree-node tree-changed" data-nid="' + _esc(n.id) + '" style="border-left-color:' + color + '">';
     html += '<span style="color:' + color + '">' + prefix + '</span> ';
-    html += '<b>' + n.name + '</b>';
-    if (n.label) html += ' <span class="tree-label">' + n.label + '</span>';
+    html += '<b>' + _esc(n.name) + '</b>';
+    if (n.label) html += ' <span class="tree-label">' + _esc(n.label) + '</span>';
     html += '</div>';
 
     // Outgoing CALLS (what this function calls)
@@ -2332,20 +2336,24 @@ function buildImpactTree(change) {
       return l.type === 'CALLS';
     });
     if (outCalls.length > 0) {
-      html += '<div class="tree-group">';
-      html += '<div class="tree-group-label">calls (' + outCalls.length + ')</div>';
-      outCalls.slice(0, 10).forEach(function(l) {
+      var outResolved = [];
+      outCalls.forEach(function(l) {
         var tid = typeof l.target === 'object' ? l.target.id : l.target;
         var tn = gData.nodes.find(function(nd){ return nd.id === tid; });
-        if (tn) {
-          html += '<div class="tree-leaf" onclick="previewNode(\'' + tn.id + '\')">';
-          html += '<span class="tree-name">' + tn.name + '</span>';
-          html += '<span class="tree-file-hint">' + ((tn.file || '').split('/').pop()) + '</span>';
-          html += '</div>';
-        }
+        if (tn) outResolved.push(tn);
       });
-      if (outCalls.length > 10) html += '<div class="tree-more">+' + (outCalls.length - 10) + ' more</div>';
-      html += '</div>';
+      if (outResolved.length > 0) {
+        html += '<div class="tree-group">';
+        html += '<div class="tree-group-label">calls (' + outResolved.length + ')</div>';
+        outResolved.slice(0, 10).forEach(function(tn) {
+          html += '<div class="tree-leaf" data-nid="' + _esc(tn.id) + '">';
+          html += '<span class="tree-name">' + _esc(tn.name) + '</span>';
+          html += '<span class="tree-file-hint">' + _esc((tn.file || '').split('/').pop()) + '</span>';
+          html += '</div>';
+        });
+        if (outResolved.length > 10) html += '<div class="tree-more">+' + (outResolved.length - 10) + ' more</div>';
+        html += '</div>';
+      }
     }
 
     // Incoming CALLS (who calls this function)
@@ -2353,20 +2361,24 @@ function buildImpactTree(change) {
       return l.type === 'CALLS';
     });
     if (inCalls.length > 0) {
-      html += '<div class="tree-group">';
-      html += '<div class="tree-group-label">called by (' + inCalls.length + ')</div>';
-      inCalls.slice(0, 10).forEach(function(l) {
+      var inResolved = [];
+      inCalls.forEach(function(l) {
         var sid = typeof l.source === 'object' ? l.source.id : l.source;
         var sn = gData.nodes.find(function(nd){ return nd.id === sid; });
-        if (sn) {
-          html += '<div class="tree-leaf" onclick="previewNode(\'' + sn.id + '\')">';
-          html += '<span class="tree-name">' + sn.name + '</span>';
-          html += '<span class="tree-file-hint">' + ((sn.file || '').split('/').pop()) + '</span>';
-          html += '</div>';
-        }
+        if (sn) inResolved.push(sn);
       });
-      if (inCalls.length > 10) html += '<div class="tree-more">+' + (inCalls.length - 10) + ' more</div>';
-      html += '</div>';
+      if (inResolved.length > 0) {
+        html += '<div class="tree-group">';
+        html += '<div class="tree-group-label">called by (' + inResolved.length + ')</div>';
+        inResolved.slice(0, 10).forEach(function(sn) {
+          html += '<div class="tree-leaf" data-nid="' + _esc(sn.id) + '">';
+          html += '<span class="tree-name">' + _esc(sn.name) + '</span>';
+          html += '<span class="tree-file-hint">' + _esc((sn.file || '').split('/').pop()) + '</span>';
+          html += '</div>';
+        });
+        if (inResolved.length > 10) html += '<div class="tree-more">+' + (inResolved.length - 10) + ' more</div>';
+        html += '</div>';
+      }
     }
 
     html += '</div>'; // tree-branch
@@ -2633,6 +2645,12 @@ function showImpactPanel(change) {
   }
 
   document.getElementById('insp-body').innerHTML = html;
+
+  // Delegated click for impact tree nodes (data-nid attribute)
+  document.getElementById('insp-body').addEventListener('click', function(e) {
+    var el = e.target.closest('[data-nid]');
+    if (el && el.dataset.nid) previewNode(el.dataset.nid);
+  });
 
   // Fetch test suggestions async
   if (changedNames.length > 0) {

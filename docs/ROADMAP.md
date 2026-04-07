@@ -65,11 +65,22 @@ Two interfaces, one brain:
 - 778 tests, 86% coverage
 
 ### v0.9.0 -- Terminal Cockpit
-- Full-width status bar (replaces helpbar/topbar/sidebar-stats) with mode badge, stats, context-sensitive shortcuts, FPS counter
+- Full-width status bar with mode badge, stats, context-sensitive shortcuts, FPS counter
 - Panel collapse: Ctrl+B toggle sidebar, Ctrl+I toggle inspector
 - Command palette overlay: Ctrl+K or / for fuzzy search across nodes, files, commands
-- Sidebar tabs replaced with stacked accordion sections (all visible at once, multiple expandable)
-- 810 tests, 86% coverage
+- 805 tests, 86% coverage
+
+### v0.9.1 -- Visualization Enhancement
+- Node text labels with LOD (visible when zoomed in, hidden when zoomed out)
+- Default directional arrows on CALLS edges
+- Nebula label improvements (larger font, dark background, min scale 50)
+- Floating legend panel (bottom-right, collapsible)
+- Selection glow halo (pulsing white, tracks node position)
+- Edge dash patterns (IMPORTS dashed, EXTENDS dotted) — requires 3d-force-graph upgrade
+- Minimap (XZ projection, click-to-fly, 5fps throttle)
+- Constellation expand animation on node selection
+- QA review: THREE.js dispose, glow tracking, NaN guards, timeout cleanup
+- 821 tests, 86% coverage
 
 ---
 

@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-810%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-821%20passed-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen" alt="Coverage">
   <img src="https://img.shields.io/badge/MCP%20tools-17-blueviolet" alt="17 MCP tools">
   <img src="https://img.shields.io/badge/dependencies-zero%20(core)-orange" alt="Zero deps">
@@ -295,7 +295,7 @@ vector_graph/
 | **Terminal UI** | rich / textual | latest | TUI dashboard (optional) |
 | **Community Detection** | networkx | 3.0+ | Label propagation (optional) |
 | **Graph Export** | pygraphviz | 1.7+ | DOT format rendering (optional) |
-| **Testing** | pytest + pytest-cov | 7.0+ | 810 tests, 86% coverage |
+| **Testing** | pytest + pytest-cov | 7.0+ | 821 tests, 86% coverage |
 | **Build** | hatchling | latest | PEP 517 build backend |
 
 ## Example Project
@@ -308,7 +308,7 @@ vector-graph examples/taskflow --serve --max-nodes 500
 ## Testing
 
 ```bash
-pytest -q                          # 810 tests, ~20s
+pytest -q                          # 821 tests, ~20s
 pytest --cov=vector_graph          # 86% coverage
 pytest -m level0                   # data types only
 pytest -m level2                   # analysis algorithms only

@@ -1,6 +1,7 @@
 """Core task management engine — CRUD + status transitions."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from taskflow.engine.notifier import NotificationService  # CIRCULAR DEP (intentional)
@@ -56,6 +57,54 @@ class TaskEngine:
             tasks = [t for t in tasks if t.assignee == assignee]
         if project_id is not None:
             tasks = [t for t in tasks if t.project_id == project_id]
+        return tasks
+
+    def search_tasks(
+        self,
+        keyword: Optional[str] = None,
+        status: Optional[TaskStatus] = None,
+        priority: Optional[Priority] = None,
+        assignee: Optional[str] = None,
+        tag: Optional[str] = None,
+        overdue_only: bool = False,
+        sort_by: str = "priority",
+        ascending: bool = False,
+    ) -> list[Task]:
+        """Search tasks with multi-criteria filtering and sorting.
+
+        Args:
+            keyword: Case-insensitive match against title and description.
+            status: Exact status filter.
+            priority: Minimum priority threshold (inclusive).
+            assignee: Exact assignee filter.
+            tag: Tasks must contain this tag.
+            overdue_only: Only return overdue tasks.
+            sort_by: One of 'priority', 'created', 'due_date', 'status'.
+            ascending: Sort direction (default: descending).
+        """
+        tasks = self.list_tasks(status=status, assignee=assignee)
+
+        if keyword:
+            kw = keyword.lower()
+            tasks = [
+                t for t in tasks
+                if kw in t.title.lower() or kw in t.description.lower()
+            ]
+        if priority is not None:
+            tasks = [t for t in tasks if t.priority.value >= priority.value]
+        if tag is not None:
+            tasks = [t for t in tasks if t.has_tag(tag)]
+        if overdue_only:
+            tasks = [t for t in tasks if t.is_overdue]
+
+        sort_keys = {
+            "priority": lambda t: t.priority.value,
+            "created": lambda t: t.created_at,
+            "due_date": lambda t: t.due_date or datetime(9999, 12, 31),
+            "status": lambda t: t.status.value,
+        }
+        key_fn = sort_keys.get(sort_by, sort_keys["priority"])
+        tasks.sort(key=key_fn, reverse=not ascending)
         return tasks
 
     def get_overdue_tasks(self) -> list[Task]:
@@ -144,6 +193,8 @@ class TaskEngine:
                 {"id": st.id, "title": st.title, "done": st.done}
                 for st in task.subtasks
             ],
+            "created_at": task.created_at.isoformat(),
+            "due_date": task.due_date.isoformat() if task.due_date else None,
         }
 
     def _deserialize_task(self, data: dict) -> Task:
@@ -151,6 +202,13 @@ class TaskEngine:
             SubTask(id=s["id"], title=s["title"], done=s.get("done", False))
             for s in data.get("subtasks", [])
         ]
+        created_at = (
+            datetime.fromisoformat(data["created_at"])
+            if "created_at" in data
+            else datetime.now()
+        )
+        due_raw = data.get("due_date")
+        due_date = datetime.fromisoformat(due_raw) if due_raw else None
         return Task(
             id=data["id"],
             title=data["title"],
@@ -161,4 +219,6 @@ class TaskEngine:
             project_id=data.get("project_id"),
             tags=list(data.get("tags", [])),
             subtasks=subtasks,
+            created_at=created_at,
+            due_date=due_date,
         )

@@ -12,7 +12,7 @@ from taskflow.api.formatters import (
 from taskflow.engine.project_engine import ProjectEngine
 from taskflow.engine.scheduler import PriorityScheduler
 from taskflow.engine.task_engine import TaskEngine
-from taskflow.models.task import SubTask, TaskStatus
+from taskflow.models.task import Priority, SubTask, TaskStatus
 from taskflow.storage.memory import InMemoryStore
 from taskflow.utils.validators import validate_task_id, validate_task_title
 
@@ -85,6 +85,16 @@ def cmd_schedule(
     print(format_schedule_summary(scheduler.get_schedule_summary()))
 
 
+def cmd_search(task_engine: TaskEngine, label: str, **kwargs) -> None:
+    print(f"-- Search: {label} --")
+    tasks = task_engine.search_tasks(**kwargs)
+    if not tasks:
+        print("  No matching tasks.")
+    else:
+        print(format_task_table(tasks))
+    print()
+
+
 def cmd_project(project_engine: ProjectEngine, project_id: str) -> None:
     progress = project_engine.get_project_progress(project_id)
     print(format_project_summary(progress))
@@ -107,6 +117,12 @@ def main() -> None:
     print("-- Schedule (users: alice, bob) --")
     cmd_schedule(scheduler, ["alice", "bob"])
     print()
+
+    cmd_search(task_engine, "keyword='planner'", keyword="planner")
+    cmd_search(task_engine, "priority >= HIGH", priority=Priority.HIGH)
+    cmd_search(task_engine, "overdue only", overdue_only=True)
+    cmd_search(task_engine, "tag='depends_on:task-001'",
+               tag="depends_on:task-001", sort_by="created")
 
     print("-- Project p1 --")
     cmd_project(project_engine, "p1")
