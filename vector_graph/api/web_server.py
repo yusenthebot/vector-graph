@@ -335,10 +335,20 @@ def build_search_results(graph: KnowledgeGraph, query: str, limit: int = 20) -> 
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+_JS_LOAD_ORDER = [
+    "config.js", "state.js", "appearance.js", "core.js",
+    "nebulae.js", "selection.js", "sidebar.js", "search.js",
+    "changes.js", "impact.js", "effects.js", "panels.js",
+]
+
+
 def _load_html() -> str:
     """Load and compose the main HTML template from static files."""
     css = (_STATIC_DIR / "graph.css").read_text(encoding="utf-8")
-    js = (_STATIC_DIR / "graph.js").read_text(encoding="utf-8")
+    js_dir = _STATIC_DIR / "js"
+    js = "\n".join(
+        (js_dir / name).read_text(encoding="utf-8") for name in _JS_LOAD_ORDER
+    )
     html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
     return html.replace("{{GRAPH_CSS}}", css).replace("{{GRAPH_JS}}", js)
 
