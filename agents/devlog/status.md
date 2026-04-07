@@ -1,29 +1,24 @@
-# Agent Status — v0.9.1
+# Agent Status — v0.9.2
 
 ## Session: 2026-04-06
 
-### v0.9.0 Features Complete
+### Current State
 
-| Feature | Agent | Status |
-|---------|-------|--------|
-| Status bar | Alpha | done |
-| Panel collapse (Ctrl+B/Ctrl+I) | Beta | done |
-| Command palette (Ctrl+K, /) | Alpha | done |
-| Stacked accordions (replace tabs) | Beta | done |
+- Branch: `main` (after merge from `feat/beta-panel-collapse`)
+- Tests: 824 passed, 86% coverage
+- Version: 0.9.2
 
-### v0.9.1 In Progress
+### Completed This Session
 
-| Feature | Agent | Status |
-|---------|-------|--------|
-| F2: Default CALLS arrows | Alpha | done |
-| F3: Nebula label improvements | Alpha | done |
-| F6: Edge dash patterns | Alpha | done |
-| F4: Legend panel | Beta | merged |
-| F7: Minimap overlay | Beta | merged |
+| Version | Features |
+|---------|----------|
+| v0.8.0 | Hover-to-show edges, connectivity-based node sizing |
+| v0.9.0 | Status bar, panel collapse, command palette |
+| v0.9.1 | Node labels, CALLS arrows, legend, minimap, glow halo, edge dashes, constellation expand |
+| v0.9.2 | Impact graph fix (activeChangeIds fallback, auto-expand, XSS fix) |
 
-| F1: Node text labels with LOD | Alpha | done |
+### Next: v1.0.0
 
-**Alpha**: F1 node labels done — 2 new tests, 821 total passing. `_makeNodeLabel` + `_updateLabelVisibility` + Group wrapper in `nodeThreeObject`. `refreshNodeAppearance` updated for Group structure.
-**Alpha**: v0.9.1 QA fixes committed — HIGH-1 THREE.js dispose (3 sites), HIGH-2 glow position tracking + neighbor nodeId, HIGH-3 minimap NaN guards, MEDIUM-1 linkLineDash compat check, MEDIUM-2 constellation timeout dedup. 821 tests still passing.
-**Alpha**: v0.9.2 DONE — impact tree HTML replaces ForceGraph 2D canvas, activeChangeIds 4th fallback (basename exact match). 824 tests passing (+3).
-**Beta**: feat/beta-legend-minimap merged into main — legend + minimap integrated
+1. graph.js modularization (3271 lines -> ~15 ES modules)
+2. mcp_server.py split (1007 lines -> 3 files)
+3. PyPI release + theme switching + zen mode

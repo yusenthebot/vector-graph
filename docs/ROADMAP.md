@@ -82,6 +82,13 @@ Two interfaces, one brain:
 - QA review: THREE.js dispose, glow tracking, NaN guards, timeout cleanup
 - 821 tests, 86% coverage
 
+### v0.9.2 -- Impact Graph Fix
+- Fixed empty activeChangeIds (4th fallback: exact basename match)
+- Restored 2D force-graph with auto-expand: all changed nodes' 1-hop CALLS neighbors shown
+- 350px height, 60-node cap, stronger forces for large graphs
+- XSS fix: _esc() function, data-nid delegated clicks
+- 824 tests, 86% coverage
+
 ---
 
 ## Next: v1.0.0 -- Scale + Polish
