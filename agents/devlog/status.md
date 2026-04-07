@@ -17,8 +17,14 @@
 | v0.9.1 | Node labels, CALLS arrows, legend, minimap, glow halo, edge dashes, constellation expand |
 | v0.9.2 | Impact graph fix (activeChangeIds fallback, auto-expand, XSS fix) |
 
+### Phase 2 Complete: graph.js Modularization
+
+Split 3271-line monolith into 12 files under `static/js/`:
+config(76), state(46), appearance(106), core(491), nebulae(223),
+selection(269), sidebar(274), search(159), changes(653), impact(470),
+effects(156), panels(357). All under 800 lines. No behavior change.
+
 ### Next: v1.0.0
 
-1. graph.js modularization (3271 lines -> ~15 ES modules)
-2. mcp_server.py split (1007 lines -> 3 files)
-3. PyPI release + theme switching + zen mode
+1. mcp_server.py split (1007 lines -> 3 files) [optional]
+2. PyPI release + theme switching + zen mode
