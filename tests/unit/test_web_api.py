@@ -904,22 +904,22 @@ class TestGitHistoryEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestImpactGraphLabels:
-    """2D impact graph label collision avoidance (v0.8.0)."""
+    """Impact graph rendering (updated v0.9.2 — HTML tree replaced force-graph canvas)."""
 
-    def test_conditional_label_mode(self):
-        """2D graph uses conditional label rendering based on node count."""
+    def test_impact_tree_replaces_force_graph(self):
+        """v0.9.2: HTML impact tree replaces the old 2D force-graph canvas."""
         from vector_graph.api.web_server import _HTML
-        assert "nodes.length <= 15" in _HTML or "subgraph.nodes.length <= 15" in _HTML
+        assert "buildImpactTree" in _HTML
 
-    def test_2d_hover_callback(self):
-        """2D impact graph has onNodeHover for hover-to-show labels."""
+    def test_2d_hover_state_var_retained(self):
+        """hovered2dId state variable is retained (used by buildImpactSubgraph dead code)."""
         from vector_graph.api.web_server import _HTML
         assert "hovered2dId" in _HTML
 
-    def test_adjusted_charge_for_large_graphs(self):
-        """2D graph uses stronger charge for >15 nodes."""
+    def test_impact_tree_has_calls_groups(self):
+        """Impact tree shows calls/called-by groups for each changed node."""
         from vector_graph.api.web_server import _HTML
-        assert "-400" in _HTML
+        assert "tree-group-label" in _HTML or "tree-group" in _HTML
 
 
 # ---------------------------------------------------------------------------
@@ -1259,3 +1259,19 @@ class TestNodeLabels:
     def test_js_label_lod_distance(self):
         from vector_graph.api.web_server import _HTML
         assert '_updateLabelVisibility' in _HTML or 'labelVisible' in _HTML
+
+
+class TestImpactTree:
+    """Impact tree diagram replaces force-graph (v0.9.2)."""
+
+    def test_js_build_impact_tree(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'buildImpactTree' in _HTML
+
+    def test_css_impact_tree_styles(self):
+        from vector_graph.api.web_server import _HTML
+        assert '.impact-tree' in _HTML
+
+    def test_js_tree_node_click(self):
+        from vector_graph.api.web_server import _HTML
+        assert 'previewNode' in _HTML  # tree nodes click to fly to 3D

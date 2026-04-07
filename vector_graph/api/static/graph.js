@@ -1776,10 +1776,18 @@ function handleChangeEvent(change) {
         activeChangeIds.add(n.id);
       }
     });
-    // If still no match, match all nodes in the changed file
+    // If still no match, match all nodes in the changed file (endsWith)
     if (activeChangeIds.size === 0) {
       gData.nodes.forEach(n => {
         if (n.file && changedFile && n.file.endsWith(changedFile)) {
+          activeChangeIds.add(n.id);
+        }
+      });
+    }
+    // Broader fallback: exact basename comparison — handles path separator differences
+    if (activeChangeIds.size === 0 && changedFile) {
+      gData.nodes.forEach(function(n) {
+        if (n.file && n.file.split('/').pop() === changedFile) {
           activeChangeIds.add(n.id);
         }
       });
@@ -2279,6 +2287,95 @@ function buildSemanticGroups(history) {
   return groups;
 }
 
+// ── Impact Tree (v0.9.2 — replaces ForceGraph 2D canvas) ──────────────────
+
+function buildImpactTree(change) {
+  var changedFile = (change.file || '').split('/').pop();
+  var gData = graph3d ? graph3d.graphData() : {nodes:[], links:[]};
+
+  // Collect matched changed nodes
+  var changedNodes = [];
+  activeChangeIds.forEach(function(id) {
+    var n = gData.nodes.find(function(nd){ return nd.id === id; });
+    if (n) changedNodes.push(n);
+  });
+
+  if (changedNodes.length === 0) return '<div class="impact-tree-empty">No nodes matched</div>';
+
+  var html = '<div class="impact-tree">';
+
+  // Root: file header
+  var typeLabel = change.type === 'created' ? 'NEW' : change.type === 'deleted' ? 'DEL' : 'MOD';
+  var typeColor = change.type === 'created' ? 'var(--green)' : change.type === 'deleted' ? 'var(--red)' : 'var(--yellow)';
+  html += '<div class="tree-root">';
+  html += '<span class="tree-type" style="color:' + typeColor + '">' + typeLabel + '</span> ';
+  html += '<span class="tree-file">' + changedFile + '</span>';
+  html += '</div>';
+
+  // Changed functions / classes
+  changedNodes.forEach(function(n) {
+    if (n.label === 'File') return; // skip file-level nodes
+    var added = (change.nodes_added || []).indexOf(n.name) >= 0;
+    var removed = (change.nodes_removed || []).indexOf(n.name) >= 0;
+    var color = added ? 'var(--green)' : removed ? 'var(--red)' : 'var(--yellow)';
+    var prefix = added ? '+' : removed ? '-' : '~';
+
+    html += '<div class="tree-branch">';
+    html += '<div class="tree-node tree-changed" onclick="previewNode(\'' + n.id + '\')" style="border-left-color:' + color + '">';
+    html += '<span style="color:' + color + '">' + prefix + '</span> ';
+    html += '<b>' + n.name + '</b>';
+    if (n.label) html += ' <span class="tree-label">' + n.label + '</span>';
+    html += '</div>';
+
+    // Outgoing CALLS (what this function calls)
+    var outCalls = (linkIndex.from[n.id] || []).filter(function(l) {
+      return l.type === 'CALLS';
+    });
+    if (outCalls.length > 0) {
+      html += '<div class="tree-group">';
+      html += '<div class="tree-group-label">calls (' + outCalls.length + ')</div>';
+      outCalls.slice(0, 10).forEach(function(l) {
+        var tid = typeof l.target === 'object' ? l.target.id : l.target;
+        var tn = gData.nodes.find(function(nd){ return nd.id === tid; });
+        if (tn) {
+          html += '<div class="tree-leaf" onclick="previewNode(\'' + tn.id + '\')">';
+          html += '<span class="tree-name">' + tn.name + '</span>';
+          html += '<span class="tree-file-hint">' + ((tn.file || '').split('/').pop()) + '</span>';
+          html += '</div>';
+        }
+      });
+      if (outCalls.length > 10) html += '<div class="tree-more">+' + (outCalls.length - 10) + ' more</div>';
+      html += '</div>';
+    }
+
+    // Incoming CALLS (who calls this function)
+    var inCalls = (linkIndex.to[n.id] || []).filter(function(l) {
+      return l.type === 'CALLS';
+    });
+    if (inCalls.length > 0) {
+      html += '<div class="tree-group">';
+      html += '<div class="tree-group-label">called by (' + inCalls.length + ')</div>';
+      inCalls.slice(0, 10).forEach(function(l) {
+        var sid = typeof l.source === 'object' ? l.source.id : l.source;
+        var sn = gData.nodes.find(function(nd){ return nd.id === sid; });
+        if (sn) {
+          html += '<div class="tree-leaf" onclick="previewNode(\'' + sn.id + '\')">';
+          html += '<span class="tree-name">' + sn.name + '</span>';
+          html += '<span class="tree-file-hint">' + ((sn.file || '').split('/').pop()) + '</span>';
+          html += '</div>';
+        }
+      });
+      if (inCalls.length > 10) html += '<div class="tree-more">+' + (inCalls.length - 10) + ' more</div>';
+      html += '</div>';
+    }
+
+    html += '</div>'; // tree-branch
+  });
+
+  html += '</div>'; // impact-tree
+  return html;
+}
+
 function showImpactPanel(change) {
   window._lastChangeForPanel = change;
   const gData = graph3d ? graph3d.graphData() : {nodes:[]};
@@ -2367,16 +2464,10 @@ function showImpactPanel(change) {
     if (change.impact) html += ' &middot; ' + change.impact.affected_count + ' in blast radius';
     html += '</div></div></div>';
 
-    // ── 2D Impact Graph (progressive disclosure) ──
-    if (activeChangeIds.size > 0 && typeof ForceGraph !== 'undefined') {
-      html += '<div class="insp-section"><h4>Impact Graph <span style="font-size:8px;color:var(--overlay0);font-weight:normal;text-transform:none">&mdash; click node to expand</span></h4>';
-      html += '<div id="impact-graph-container">';
-      html += '<div class="impact-graph-legend">';
-      html += '<span class="legend-changed">changed</span>';
-      html += '<span class="legend-caller">callers</span>';
-      html += '<span class="legend-callee">callees</span>';
-      html += '</div></div>';
-      html += '<div id="impact-node-detail" style="padding:6px 0;min-height:24px"><span style="color:var(--overlay0);font-size:10px">Click a node to see details</span></div>';
+    // ── Impact Tree (v0.9.2 — HTML tree, replaces ForceGraph 2D canvas) ──
+    if (activeChangeIds.size > 0) {
+      html += '<div class="insp-section"><h4>Impact Tree <span style="font-size:8px;color:var(--overlay0);font-weight:normal;text-transform:none">&mdash; click node to fly to</span></h4>';
+      html += buildImpactTree(change);
       html += '</div>';
     }
 
@@ -2542,85 +2633,6 @@ function showImpactPanel(change) {
   }
 
   document.getElementById('insp-body').innerHTML = html;
-
-  // Initialize 2D impact graph if container exists
-  setTimeout(() => {
-    const container = document.getElementById('impact-graph-container');
-    if (!container || typeof ForceGraph === 'undefined') return;
-
-    // Destroy previous instance
-    if (impactGraph2d) {
-      impactGraph2d._destructor && impactGraph2d._destructor();
-      impactGraph2d = null;
-    }
-
-    const subgraph = buildImpactSubgraph();
-    if (subgraph.nodes.length === 0) return;
-
-    const width = container.clientWidth;
-    const height = 280;
-
-    _expandedNode2d = null;
-
-    impactGraph2d = ForceGraph()(container)
-      .graphData(subgraph)
-      .width(width)
-      .height(height)
-      .backgroundColor('#1e1e2e')
-      .nodeColor(n => {
-        if (n._expanded) return '#ffffff';
-        if (n._role === 'changed') return '#f9e2af';
-        if (n._role === 'caller') return '#fab387';
-        if (n._role === 'callee') return '#89b4fa';
-        return '#585b70';
-      })
-      .nodeVal(n => {
-        if (n._expanded) return 6;
-        if (n._role === 'changed') return 4;
-        return 2;
-      })
-      .nodeLabel(n => {
-        let tip = n.name + ' (' + n.file + ')';
-        if (n._role === 'changed') tip += '\n\nClick to expand connections';
-        if (n._callerCount) tip += '\n' + n._callerCount + ' callers';
-        if (n._calleeCount) tip += '\n' + n._calleeCount + ' callees';
-        return tip;
-      })
-      // Conditional labels: always show when <=15 nodes, hover-only when >15
-      .nodeCanvasObjectMode(n => {
-        if (subgraph.nodes.length <= 15) return 'after';
-        return (n.id === hovered2dId) ? 'after' : undefined;
-      })
-      .nodeCanvasObject((n, ctx, globalScale) => {
-        const fontSize = Math.max(10 / globalScale, 2);
-        ctx.font = fontSize + 'px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.fillStyle = n._expanded ? '#ffffff' : n._role === 'changed' ? '#f9e2af' : n._role === 'caller' ? '#fab387' : '#89b4fa';
-        let label = n.name;
-        if (label.length > 18) label = label.slice(0, 16) + '..';
-        ctx.fillText(label, n.x, n.y + 5);
-      })
-      .linkColor(l => l.type === 'CALLS' ? '#89b4fa44' : '#fab38744')
-      .linkWidth(l => 1.5)
-      .linkDirectionalArrowLength(4)
-      .linkDirectionalArrowRelPos(1)
-      .linkCurvature(0.2)
-      .onNodeClick(n => {
-        if (n && n.id) {
-          expand2dNode(n.id);
-          previewNode(n.id);
-        }
-      })
-      .onNodeHover(n => { hovered2dId = n ? n.id : null; })
-      .cooldownTicks(80)
-      .warmupTicks(40);
-
-    // Adaptive repulsion — stronger for large graphs to reduce overlap
-    const nodeCount = subgraph.nodes.length;
-    impactGraph2d.d3Force('charge').strength(nodeCount > 15 ? -400 : -200);
-    impactGraph2d.d3Force('link').distance(nodeCount > 15 ? 100 : 60);
-  }, 100);
 
   // Fetch test suggestions async
   if (changedNames.length > 0) {

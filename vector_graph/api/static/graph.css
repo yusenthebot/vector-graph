@@ -342,3 +342,21 @@ body { background:var(--bg); color:var(--text); font-family:'JetBrains Mono','Fi
 
 /* Minimap */
 #minimap { position:absolute; bottom:8px; right:110px; z-index:10; background:rgba(24,24,37,0.85); border:1px solid var(--surface0); border-radius:4px; cursor:crosshair; }
+
+/* Impact tree diagram (v0.9.2 — replaces force-graph canvas) */
+.impact-tree { font-size:11px; }
+.impact-tree-empty { color:var(--overlay0); padding:8px; text-align:center; }
+.tree-root { padding:4px 0; font-weight:bold; }
+.tree-type { font-size:9px; padding:1px 4px; border-radius:2px; }
+.tree-branch { margin:4px 0 8px 0; }
+.tree-node { padding:3px 8px; cursor:pointer; border-left:2px solid; margin-left:8px; }
+.tree-node:hover { background:var(--surface0); }
+.tree-node b { color:var(--text); }
+.tree-label { font-size:9px; color:var(--overlay0); }
+.tree-group { margin-left:24px; border-left:1px solid var(--surface1); padding-left:8px; }
+.tree-group-label { font-size:9px; color:var(--overlay0); text-transform:uppercase; letter-spacing:0.5px; padding:2px 0; }
+.tree-leaf { padding:1px 4px; cursor:pointer; display:flex; gap:6px; }
+.tree-leaf:hover { background:var(--surface0); color:var(--text); }
+.tree-name { color:var(--blue); }
+.tree-file-hint { color:var(--surface2); font-size:10px; margin-left:auto; }
+.tree-more { color:var(--overlay0); font-size:10px; padding:1px 4px; }

@@ -24,4 +24,6 @@
 | F1: Node text labels with LOD | Alpha | done |
 
 **Alpha**: F1 node labels done — 2 new tests, 821 total passing. `_makeNodeLabel` + `_updateLabelVisibility` + Group wrapper in `nodeThreeObject`. `refreshNodeAppearance` updated for Group structure.
+**Alpha**: v0.9.1 QA fixes committed — HIGH-1 THREE.js dispose (3 sites), HIGH-2 glow position tracking + neighbor nodeId, HIGH-3 minimap NaN guards, MEDIUM-1 linkLineDash compat check, MEDIUM-2 constellation timeout dedup. 821 tests still passing.
+**Alpha**: [IN PROGRESS] v0.9.2 — fix empty impact graph + replace force-graph canvas with HTML impact tree. Working on: tests/unit/test_web_api.py (TestImpactTree), graph.js (buildImpactTree + fix activeChangeIds), graph.css (impact tree styles).
 **Beta**: feat/beta-legend-minimap merged into main — legend + minimap integrated
