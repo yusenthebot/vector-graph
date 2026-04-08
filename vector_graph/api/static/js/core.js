@@ -162,7 +162,16 @@ function initGraph() {
       const geo = _GEO[n.label] || _GEO._default;
       const color = getNodeColor(n);
       const size = getNodeSize(n);
-      const mat = new THREE.MeshLambertMaterial({color, transparent: true, opacity: 0.9});
+      var emissiveIntensity = typeof getNodeEmissive === 'function' ? getNodeEmissive(n) : 0.15;
+      const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        emissive: color,
+        emissiveIntensity: emissiveIntensity,
+        metalness: 0.05,
+        roughness: 0.6,
+        transparent: true,
+        opacity: 0.92,
+      });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.scale.setScalar(size * 0.8);
 
@@ -340,12 +349,15 @@ function initGraph() {
     });
   }
 
-  // Add lights for MeshLambertMaterial visibility
+  // Lighting for MeshStandardMaterial (PBR)
   const scene = graph3d.scene();
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
   dirLight.position.set(100, 200, 100);
   scene.add(dirLight);
+  var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.2);
+  dirLight2.position.set(-80, -100, -60);
+  scene.add(dirLight2);
 
   // Seed initial positions by group — spread groups apart before simulation
   _seedGroupPositions(nodes);
@@ -356,6 +368,9 @@ function initGraph() {
   graph3d.d3Force('charge').strength(-15);
   // Weaker link distance so intra-group links pull tight
   graph3d.d3Force('link').distance(20).strength(0.3);
+
+  // Post-processing pipeline (bloom, fog, dust)
+  if (typeof setupPostProcessing === 'function') setupPostProcessing();
 
   // Render nebulae once when simulation stabilizes
   graph3d.onEngineStop(() => updateNebulae());

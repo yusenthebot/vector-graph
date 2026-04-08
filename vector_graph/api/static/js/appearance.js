@@ -98,7 +98,13 @@ function refreshNodeAppearance() {
     // Handle both direct Mesh (legacy) and Group wrapper (with label sprite)
     const mesh = obj.isMesh ? obj : (obj.children && obj.children[0]);
     if (mesh && mesh.material) {
-      mesh.material.color.set(getNodeColor(n));
+      var c = getNodeColor(n);
+      mesh.material.color.set(c);
+      // Emissive for bloom: color matches node color, intensity drives bloom visibility
+      if (mesh.material.emissive !== undefined) {
+        mesh.material.emissive.set(c);
+        mesh.material.emissiveIntensity = typeof getNodeEmissive === 'function' ? getNodeEmissive(n) : 0.15;
+      }
       const s = getNodeSize(n) * 0.8;
       mesh.scale.set(s, s, s);
     }

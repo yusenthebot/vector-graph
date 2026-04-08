@@ -336,7 +336,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 
 _JS_LOAD_ORDER = [
-    "config.js", "state.js", "appearance.js", "core.js",
+    "config.js", "state.js", "renderer.js", "appearance.js", "core.js",
     "nebulae.js", "selection.js", "sidebar.js", "search.js",
     "changes.js", "impact.js", "effects.js", "panels.js",
 ]
